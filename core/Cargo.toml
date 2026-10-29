@@ -1,0 +1,44 @@
+[package]
+name = "core"
+version.workspace = true
+edition.workspace = true
+
+# The package is called `core` (`cargo test -p core`), but the lib needs another
+# name so it does not clash with the standard library `core`.
+[lib]
+name = "orch_core"
+
+[dependencies]
+agent-client-protocol = { version = "3.6", features = ["unstable_end_turn_token_usage"] }
+ashpd = { version = "0.13", features = ["global_shortcuts"] }
+async-channel.workspace = true
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+cpal = "0.18"
+dirs = "6"
+futures = "0.3"
+oo7 = "0.6.0"
+regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+rodio = { version = "0.23", default-features = false, features = ["playback"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+shell-words = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time", "process", "io-util", "fs"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tracing.workspace = true
+uuid = { version = "1", features = ["v4", "serde"] }
+whisper-rs = { version = "0.16", features = ["tracing_backend"] }
+
+[features]
+# Whisper on the GPU; the `medium` model is preferred when one is on (ADR 0011).
+gpu-vulkan = ["whisper-rs/vulkan"]
+gpu-cuda = ["whisper-rs/cuda"]
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["test-util", "rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

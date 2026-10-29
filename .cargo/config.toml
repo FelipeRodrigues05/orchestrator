@@ -1,0 +1,3 @@
+[env]
+# whisper-rs-sys: use the bundled bindings (no libclang on this machine).
+WHISPER_DONT_GENERATE_BINDINGS = "1"

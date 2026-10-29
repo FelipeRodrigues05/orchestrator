@@ -1,0 +1,28 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "orchestrator"
+path = "src/main.rs"
+
+[dependencies]
+adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
+async-channel.workspace = true
+chrono = "0.4"
+gtk = { package = "gtk4", version = "0.11", features = ["v4_12"] }
+gtk4-layer-shell = "0.8.1"
+ksni = { version = "0.3.7", features = ["blocking"] }
+orch_core = { package = "core", path = "../core" }
+pangocairo = "0.22"
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = "1"
+
+[features]
+gpu-vulkan = ["orch_core/gpu-vulkan"]
+gpu-cuda = ["orch_core/gpu-cuda"]
+
+[lints]
+workspace = true

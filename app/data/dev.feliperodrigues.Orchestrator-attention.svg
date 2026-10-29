@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Control-room tile: black screen, box-drawn panels, the pet in the middle, red only for "live". -->
+  <rect x="4" y="4" width="120" height="120" rx="22" fill="#000"/>
+  <rect x="4.5" y="4.5" width="119" height="119" rx="21.5" fill="none" stroke="#2e2e2e"/>
+  <g fill="none" stroke="#444" stroke-width="3" stroke-linecap="square">
+    <!-- Double-line frame corners, like ╔ ╗ ╚ ╝ -->
+    <path d="M18 34V18h16M94 18h16v16M18 94v16h16M110 94v16H94"/>
+    <path d="M24 34V24h10M94 24h10v10M24 94v10h10M104 94v10H94"/>
+  </g>
+  <!-- Sector-map links into the pet's face -->
+  <g stroke="#2e2e2e" stroke-width="2" stroke-dasharray="3 3">
+    <path d="M26 64h14M88 64h14"/>
+  </g>
+  <!-- Pet: antenna, bracket body, square eyes, mouth -->
+  <g fill="none" stroke="#ff3b30" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M56 40l-4-8M72 40l4-8"/>
+    <path d="M48 42h-2c-4 0-6 3-6 7v26c0 4 2 7 6 7h2M80 42h2c4 0 6 3 6 7v26c0 4-2 7-6 7h-2"/>
+    <path d="M54 74c6 4 14 4 20 0"/>
+  </g>
+  <rect x="51" y="54" width="7" height="9" fill="#ff3b30"/>
+  <rect x="70" y="54" width="7" height="9" fill="#ff3b30"/>
+  <!-- Status bar at the bottom: three agents, one urgent -->
+  <g fill="#808080">
+    <rect x="44" y="96" width="10" height="4"/>
+    <rect x="59" y="96" width="10" height="4"/>
+  </g>
+  <rect x="74" y="96" width="10" height="4" fill="#ff3b30"/>
+  <circle cx="102" cy="26" r="5" fill="#ff3b30"/>
+</svg>

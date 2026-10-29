@@ -1,0 +1,130 @@
+//! Provider-agnostic agent runners (ADR 0004). Nothing outside this module matches
+//! on the provider type or parses CLI/API output.
+
+pub mod acp;
+pub mod api;
+#[cfg(test)]
+pub mod fake;
+pub mod llm;
+pub mod mcp_cli;
+pub mod tools;
+pub mod update;
+
+use std::path::PathBuf;
+
+use async_trait::async_trait;
+use chrono::Utc;
+use serde_json::Value;
+use tokio::sync::mpsc;
+use uuid::Uuid;
+
+use crate::{
+    broker::{AskContext, BrokerHandle},
+    model::{Agent, Decision, PermissionRequest, Provider},
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolStatus {
+    Started,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentEvent {
+    /// A chunk of the agent's reply.
+    Text(String),
+    /// A chunk of reasoning, shown dimmed.
+    Thought(String),
+    Tool {
+        title: String,
+        status: ToolStatus,
+    },
+    /// The agent finished answering the last message.
+    TurnEnd {
+        stop_reason: String,
+    },
+    /// Tokens spent by the last model call or turn.
+    Usage(crate::model::Usage),
+    Error(String),
+    /// The process or task is gone.
+    Exited,
+}
+
+pub type RunnerResult<T> = Result<T, String>;
+
+#[async_trait]
+pub trait AgentRunner: Send {
+    async fn start(&mut self, agent: &Agent, mcp_url: &str) -> RunnerResult<()>;
+    async fn send(&mut self, text: String) -> RunnerResult<()>;
+    /// Taken once, right after `start`.
+    fn events(&mut self) -> mpsc::Receiver<AgentEvent>;
+    async fn stop(&mut self) -> RunnerResult<()>;
+}
+
+/// What a runner needs from the rest of the app.
+#[derive(Clone)]
+pub struct RunnerContext {
+    pub broker: BrokerHandle,
+    pub group_id: Uuid,
+    pub group_name: String,
+    /// Run agent processes and commands inside bubblewrap.
+    pub sandbox: bool,
+    /// Permission endpoint for CLIs that ask through MCP.
+    pub mcp: Option<crate::mcp::McpHandle>,
+    /// `list_agents` / `ask_agent`: the agent's teammates.
+    pub team: Option<crate::team::TeamHandle>,
+}
+
+pub fn for_provider(provider: &Provider, context: RunnerContext) -> RunnerResult<Box<dyn AgentRunner>> {
+    match provider {
+        Provider::CliAcp { .. } => Ok(Box::new(acp::AcpRunner::new(context))),
+        Provider::Api { .. } | Provider::Local { .. } => Ok(Box::new(api::ApiRunner::new(context))),
+        Provider::CliMcp { .. } => Ok(Box::new(mcp_cli::McpCliRunner::new(context))),
+    }
+}
+
+/// The agent fields a runner keeps after `start`.
+#[derive(Debug, Clone)]
+pub(crate) struct AgentInfo {
+    pub id: Uuid,
+    pub name: String,
+    pub worktree: PathBuf,
+}
+
+impl AgentInfo {
+    pub fn of(agent: &Agent) -> Self {
+        Self { id: agent.id, name: agent.name.clone(), worktree: agent.worktree.clone() }
+    }
+}
+
+/// Builds the `PermissionRequest` and waits for the broker (ADR 0005).
+pub(crate) async fn ask_permission(
+    context: &RunnerContext,
+    agent: &AgentInfo,
+    tool: &str,
+    input: Value,
+    paths: Vec<PathBuf>,
+) -> Decision {
+    let request = PermissionRequest {
+        id: Uuid::new_v4(),
+        agent_id: agent.id,
+        tool: tool.to_owned(),
+        spoken_summary: String::new(),
+        input,
+        created_at: Utc::now(),
+        timeout_secs: crate::model::PERMISSION_TIMEOUT_SECS,
+        warning: None,
+    };
+    let what = request.input_summary();
+    let request =
+        PermissionRequest { spoken_summary: format!("{} wants to use {tool}: {what}", agent.name), ..request };
+    let ask = AskContext {
+        group_id: context.group_id,
+        agent_name: agent.name.clone(),
+        group_name: context.group_name.clone(),
+        worktree: agent.worktree.clone(),
+        paths,
+    };
+    context.broker.ask(request, ask).await
+}

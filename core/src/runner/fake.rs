@@ -1,0 +1,72 @@
+//! Scripted runner for tests: echoes messages, `perm:<command>` asks the broker to
+//! run `<command>` and reports the decision, `ask:<agent>:<message>` asks a teammate.
+//! Turns run one after another, like a real agent's.
+
+use async_trait::async_trait;
+use serde_json::json;
+use tokio::sync::mpsc;
+
+use super::{AgentEvent, AgentInfo, AgentRunner, RunnerContext, RunnerResult, ask_permission};
+use crate::model::Agent;
+
+pub struct FakeRunner {
+    context: RunnerContext,
+    events_tx: mpsc::Sender<AgentEvent>,
+    events_rx: Option<mpsc::Receiver<AgentEvent>>,
+    prompts: Option<mpsc::UnboundedSender<String>>,
+}
+
+impl FakeRunner {
+    pub fn new(context: RunnerContext) -> Self {
+        let (events_tx, events_rx) = mpsc::channel(64);
+        Self { context, events_tx, events_rx: Some(events_rx), prompts: None }
+    }
+}
+
+#[async_trait]
+impl AgentRunner for FakeRunner {
+    async fn start(&mut self, agent: &Agent, _mcp_url: &str) -> RunnerResult<()> {
+        let info = AgentInfo::of(agent);
+        let events = self.events_tx.clone();
+        let context = self.context.clone();
+        let (prompts, mut queue) = mpsc::unbounded_channel::<String>();
+        self.prompts = Some(prompts);
+        tokio::spawn(async move {
+            while let Some(text) = queue.recv().await {
+                // The orchestrator wraps first prompts in a briefing; the script is the last line.
+                let last = text.lines().last().unwrap_or_default().trim();
+                let script = last.strip_prefix("Operator: ").unwrap_or(last).to_owned();
+                let reply = if let Some(command) = script.strip_prefix("perm:") {
+                    let decision =
+                        ask_permission(&context, &info, "Bash", json!({ "command": command }), Vec::new()).await;
+                    format!("{command}: {}\n", if decision.allows() { "allowed" } else { "denied" })
+                } else if let Some((agent, message)) = script.strip_prefix("ask:").and_then(|r| r.split_once(':')) {
+                    let team = context.team.as_ref().expect("team tools");
+                    match team.ask(info.id, agent, message).await {
+                        Ok(answer) => format!("{agent} said: {answer}\n"),
+                        Err(error) => format!("ask failed: {error}\n"),
+                    }
+                } else {
+                    format!("echo: {text}\n")
+                };
+                let _ = events.send(AgentEvent::Text(reply)).await;
+                let _ = events.send(AgentEvent::TurnEnd { stop_reason: "EndTurn".into() }).await;
+            }
+        });
+        Ok(())
+    }
+
+    async fn send(&mut self, text: String) -> RunnerResult<()> {
+        let prompts = self.prompts.as_ref().ok_or("not started")?;
+        prompts.send(text).map_err(|_| "stopped".to_owned())
+    }
+
+    fn events(&mut self) -> mpsc::Receiver<AgentEvent> {
+        self.events_rx.take().unwrap_or_else(|| mpsc::channel(1).1)
+    }
+
+    async fn stop(&mut self) -> RunnerResult<()> {
+        let _ = self.events_tx.send(AgentEvent::Exited).await;
+        Ok(())
+    }
+}

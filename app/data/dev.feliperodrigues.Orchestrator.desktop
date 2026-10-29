@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Orchestrator
+GenericName=Agent Control Room
+Comment=Run and supervise coding agents from one control room
+Exec=orchestrator
+Icon=dev.feliperodrigues.Orchestrator
+Terminal=false
+Categories=Development;
+Keywords=agents;ai;claude;opencode;codex;voice;
+StartupNotify=true
+StartupWMClass=dev.feliperodrigues.Orchestrator
+DBusActivatable=false
