@@ -150,3 +150,12 @@ pub(super) fn parse_color(name: &str) -> Option<Option<String>> {
             .map(|(en, _)| Some((*en).to_owned())),
     }
 }
+
+/// `$0.42`, `$12.30`; empty when nothing was reported.
+pub(super) fn format_cost(micros: u64) -> String {
+    if micros == 0 {
+        return String::new();
+    }
+    let cents = micros.div_ceil(10_000);
+    format!("${}.{:02}", cents / 100, cents % 100)
+}

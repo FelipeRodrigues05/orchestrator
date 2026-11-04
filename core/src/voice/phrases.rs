@@ -44,11 +44,13 @@ impl Phrase {
         use Language::{English as En, Pt};
         match (self, language) {
             (Phrase::Permission { agent, group, tool, what }, Pt) => {
+                let what = speakable(what, "e mais");
                 let bash = tool.eq_ignore_ascii_case("bash");
                 let action = if bash { format!("rodar {what}") } else { format!("usar {tool} em {what}") };
                 format!("Agente {agent}, do grupo {group}, pede permissão para {action}")
             }
             (Phrase::Permission { agent, group, tool, what }, En) => {
+                let what = speakable(what, "and more");
                 let bash = tool.eq_ignore_ascii_case("bash");
                 let action = if bash { format!("run {what}") } else { format!("use {tool} on {what}") };
                 format!("Agent {agent}, from group {group}, asks permission to {action}")
@@ -86,6 +88,22 @@ impl Phrase {
     }
 }
 
+/// Words worth saying out loud: paths become their file name, flags (`--parallel`)
+/// are left out and a long command stops after a few words; the screen keeps the
+/// whole request.
+fn speakable(what: &str, and_more: &str) -> String {
+    const WORDS: usize = 8;
+    let words: Vec<String> = what
+        .split_whitespace()
+        .filter(|word| !word.starts_with('-'))
+        .map(|word| match word.trim_end_matches('/').rsplit_once('/') {
+            Some((_, name)) if !name.is_empty() => name.to_owned(),
+            _ => word.to_owned(),
+        })
+        .collect();
+    if words.len() > WORDS { format!("{} {and_more}", words[..WORDS].join(" ")) } else { words.join(" ") }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +120,39 @@ mod tests {
         assert_eq!(ask.render(Language::English), "Agent Tests, from group API, asks permission to run cargo test");
         assert_eq!(Language::parse("English"), Some(Language::English));
         assert_eq!(Language::parse("pt-BR"), Some(Language::Pt));
+
+        // Paths are spoken as their file name; long commands are cut.
+        let path =
+            "/home/me/www/personal/job-applications/.worktrees/kio-bcc2e5c1/tests/Unit/DTOs/ExtractedJobTest.php";
+        let edit = Phrase::Permission {
+            agent: "Kio".into(),
+            group: "Backend".into(),
+            tool: "Write".into(),
+            what: path.into(),
+        };
+        assert_eq!(
+            edit.render(Language::Pt),
+            "Agente Kio, do grupo Backend, pede permissão para usar Write em ExtractedJobTest.php"
+        );
+        let long = Phrase::Permission {
+            agent: "Kio".into(),
+            group: "Backend".into(),
+            tool: "Bash".into(),
+            what: "php /srv/app/artisan test --filter=ExtractedJobTest --stop-on-failure --parallel".into(),
+        };
+        assert_eq!(
+            long.render(Language::English),
+            "Agent Kio, from group Backend, asks permission to run php artisan test"
+        );
+        let many = Phrase::Permission {
+            agent: "Kio".into(),
+            group: "Backend".into(),
+            tool: "Bash".into(),
+            what: "git add src/a.rs src/b.rs src/c.rs src/d.rs src/e.rs src/f.rs src/g.rs".into(),
+        };
+        assert_eq!(
+            many.render(Language::Pt),
+            "Agente Kio, do grupo Backend, pede permissão para rodar git add a.rs b.rs c.rs d.rs e.rs f.rs e mais"
+        );
     }
 }

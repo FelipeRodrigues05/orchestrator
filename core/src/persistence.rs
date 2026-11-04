@@ -339,6 +339,8 @@ fn load(db: &Connection, root: &Path) -> rusqlite::Result<Option<LoadedProject>>
                 model: row.get(8)?,
                 models: Vec::new(),
                 color: row.get(9)?,
+                context: None,
+                cost_micros: 0,
             })
         })?;
         for agent in rows {
@@ -386,6 +388,8 @@ mod tests {
             model: Some("opus".into()),
             models: Vec::new(),
             color: None,
+            context: None,
+            cost_micros: 0,
         };
         {
             let store = Store::open(&path).unwrap();

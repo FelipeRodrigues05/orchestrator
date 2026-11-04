@@ -8,8 +8,8 @@ use orch_core::{
 };
 
 use super::format::{
-    agent_style, clock, display_order, format_tokens, lamp_for, level_style, sparkline,
-    state_label, uptime,
+    agent_style, clock, display_order, format_cost, format_tokens, lamp_for, level_style,
+    sparkline, state_label, uptime,
 };
 use super::{
     ACCENT, Action, DIM, ERROR, FAINT, FRAME, OK, Pane, Prompt, Room, SPARK_WIDTH, Spans, TEXT,
@@ -149,7 +149,7 @@ impl Room {
         let x = area.x + 1;
         let width = area.w.saturating_sub(2);
         let header = format!(
-            "{}{}{}{}{}{}{}{}TASK",
+            "{}{}{}{}{}{}{}{}{}{}TASK",
             fit("ST", 3),
             fit("NAME", 14),
             fit("GROUP", 11),
@@ -157,6 +157,8 @@ impl Room {
             fit("STATE", 21),
             fit("UPTIME", 8),
             fit("TOKENS", 8),
+            fit("CTX", 6),
+            fit("COST", 8),
             fit("ACTIVITY", SPARK_WIDTH + 2),
         );
         grid.text(x, area.y, width, &header, DIM.bold());
@@ -184,6 +186,8 @@ impl Room {
                 s(fit(state_label(agent.state), 21), lamp),
                 s(fit(&uptime(agent, now), 8), DIM),
                 s(fit(&format_tokens(agent.usage.total()), 8), DIM),
+                context_span(agent, 6),
+                s(fit(&format_cost(agent.cost_micros), 8), DIM),
                 s(sparkline(state, agent.id, now), FAINT),
                 s("  ", TEXT),
                 s(&agent.task, TEXT),
@@ -234,6 +238,15 @@ impl Room {
             grid.cols - 2,
             sep,
             &[
+                context_span(agent, 0),
+                s(
+                    format!(
+                        " {} tok {} ═ ",
+                        format_tokens(agent.usage.total()),
+                        format_cost(agent.cost_micros)
+                    ),
+                    DIM,
+                ),
                 s(agent.provider.short_name(), DIM),
                 s(
                     agent
@@ -581,28 +594,6 @@ impl Room {
     }
 }
 
-/// Splits `text` into rows of at most `width` characters, breaking at spaces when
-/// it can.
-pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(8);
-    let mut rows = Vec::new();
-    let mut rest: Vec<char> = text.chars().collect();
-    while rest.len() > width {
-        let cut = rest[..=width]
-            .iter()
-            .rposition(|c| *c == ' ')
-            .filter(|i| *i > width / 3)
-            .unwrap_or(width);
-        rows.push(rest[..cut].iter().collect::<String>().trim_end().to_owned());
-        rest.drain(..cut);
-        while rest.first() == Some(&' ') {
-            rest.remove(0);
-        }
-    }
-    rows.push(rest.into_iter().collect());
-    rows
-}
-
 /// Draws entries newest at the bottom, each wrapped under its text column after a
 /// How far a log pane is scrolled up from its newest line, in shown rows.
 #[derive(Debug, Clone, Copy, Default)]
@@ -618,39 +609,6 @@ impl Scroll {
     pub fn by(&mut self, delta: isize) {
         self.offset = self.offset.saturating_add_signed(delta);
     }
-}
-
-/// Entries wrapped under their text column, newest at the bottom, scrolled by
-/// `scroll`; a `↓ n` mark says how many rows are below when scrolled.
-pub(super) fn draw_wrapped<'a>(
-    grid: &mut Grid,
-    area: Rect,
-    entries: impl Iterator<Item = &'a LogEntry>,
-    prefix_width: usize,
-    prefix: impl Fn(&LogEntry) -> Spans,
-    style: impl Fn(&LogEntry) -> Style,
-    scroll: &mut Scroll,
-) {
-    let text_width = area.w.saturating_sub(2).saturating_sub(prefix_width);
-    let rows: Vec<Spans> = entries
-        .flat_map(|entry| {
-            let style = style(entry);
-            let head = prefix(entry);
-            wrap(&entry.text, text_width)
-                .into_iter()
-                .enumerate()
-                .map(move |(index, row)| {
-                    let mut spans = if index == 0 {
-                        head.clone()
-                    } else {
-                        vec![s(" ".repeat(prefix_width), TEXT)]
-                    };
-                    spans.push(s(row, style));
-                    spans
-                })
-        })
-        .collect();
-    draw_rows(grid, area, &rows, scroll);
 }
 
 /// Rows newest at the bottom, scrolled by `scroll` (held still while rows arrive);
@@ -691,32 +649,69 @@ pub(super) fn draw_log(
     pet: &str,
     scroll: &mut Scroll,
 ) {
-    draw_wrapped(
-        grid,
-        area,
-        state.log.iter(),
-        20,
-        |entry| {
-            let fallback = if entry.level == LogLevel::Pet {
-                pet
+    const PREFIX: usize = 20;
+    let text_width = area.w.saturating_sub(2 + PREFIX);
+    let mut rows: Vec<Spans> = Vec::new();
+    for entry in &state.log {
+        let fallback = if entry.level == LogLevel::Pet {
+            pet
+        } else {
+            "runtime"
+        };
+        let agent = entry.agent_id.and_then(|id| state.agent(id));
+        let you = entry.level == LogLevel::Operator;
+        // What the operator typed or said reads as theirs: "you › Kio", in white.
+        let source = match (you, agent) {
+            (true, Some(agent)) => format!("you›{}", agent.name),
+            (true, None) => "you".to_owned(),
+            (false, agent) => agent.map_or(fallback, |a| a.name.as_str()).to_owned(),
+        };
+        let color = agent.filter(|_| !you).and_then(agent_style);
+        let head = vec![
+            s(clock(entry.at), DIM),
+            s(" ", TEXT),
+            s(fit(&source, 9), color.unwrap_or(ACCENT).bold()),
+            s(" ", TEXT),
+        ];
+        // The agent's colour over the whole line, Markdown styled within it;
+        // warnings and errors stay red.
+        let ink = match (entry.level, color) {
+            (LogLevel::Operator, _) => markdown::Ink::plain(ACCENT.bold()),
+            (LogLevel::Warn | LogLevel::Error, _) | (_, None) => {
+                markdown::Ink::plain(level_style(entry.level))
+            }
+            (_, Some(color)) => markdown::Ink::plain(color),
+        };
+        for (index, row) in markdown::log_rows(entry, ink, text_width)
+            .into_iter()
+            .enumerate()
+        {
+            let mut line = if index == 0 {
+                head.clone()
             } else {
-                "runtime"
+                vec![s(" ".repeat(PREFIX), TEXT)]
             };
-            let agent = entry.agent_id.and_then(|id| state.agent(id));
-            let source = agent.map_or(fallback, |a| a.name.as_str());
-            let name_style = agent.and_then(agent_style).unwrap_or(ACCENT);
-            vec![
-                s(clock(entry.at), DIM),
-                s(" ", TEXT),
-                s(fit(source, 9), name_style.bold()),
-                s(" ", TEXT),
-            ]
-        },
-        // The whole line in the agent's colour; warnings and errors stay red.
-        |entry| match (entry.level, entry.agent_id.and_then(|id| state.agent(id))) {
-            (LogLevel::Warn | LogLevel::Error, _) | (_, None) => level_style(entry.level),
-            (_, Some(agent)) => agent_style(agent).unwrap_or_else(|| level_style(entry.level)),
-        },
-        scroll,
-    );
+            line.extend(row);
+            rows.push(line);
+        }
+    }
+    draw_rows(grid, area, &rows, scroll);
+}
+
+/// `ctx 45%`, red from where agents get summarised; `ctx –` when the CLI does not say.
+/// `width` 0: no padding.
+fn context_span(agent: &orch_core::model::Agent, width: usize) -> (String, Style) {
+    let percent = agent.context.and_then(|c| c.percent());
+    let text = match (percent, width) {
+        (Some(p), 0) => format!("ctx {p}%"),
+        (None, 0) => "ctx –".to_owned(),
+        (Some(p), w) => fit(&format!("{p}%"), w),
+        (None, w) => fit("–", w),
+    };
+    let style = match percent {
+        Some(p) if p >= 85 => WARN.bold(),
+        Some(p) if p >= 60 => TEXT,
+        _ => DIM,
+    };
+    s(text, style)
 }

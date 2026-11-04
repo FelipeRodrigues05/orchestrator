@@ -39,6 +39,17 @@ impl Orchestrator {
             Command::SetModel { agent, model } => self.set_model(agent, model.trim()),
             Command::ProbeModels(agent) => self.probe_models(agent),
             Command::SetFallback(text) => self.set_fallback(&text),
+            Command::SetCompactAt(percent) => {
+                self.compact_at = percent.map(|p| p.clamp(30, 99));
+                if let Some(store) = &self.store {
+                    store.set_setting("compact_at", &self.compact_at.map_or_else(|| "off".into(), |p| p.to_string()));
+                }
+                let text = match self.compact_at {
+                    Some(p) => format!("agents go on with a summary when their context is {p}% full"),
+                    None => "agents keep their whole context (the CLI may still compact it)".into(),
+                };
+                self.notice(LogLevel::Info, text);
+            }
             Command::StartAgent(id) => self.start(id, None),
             Command::StopAgent(id) => self.stop_agent(id),
             Command::RemoveAgent(id) => self.remove_agent(id),

@@ -7,7 +7,7 @@ use super::{ACCENT, DIM, FAINT, OK, TEXT, TITLE, WARN, s, title};
 use crate::ui::grid::{Grid, Lines, Rect, Style, Weight, fit};
 
 pub(super) fn draw_help(grid: &mut Grid) {
-    let lines: [(&str, &str); 45] = [
+    let lines: [(&str, &str); 46] = [
         (
             "Enter / i",
             "message the selected agent (or \"agente X: …\")",
@@ -23,7 +23,10 @@ pub(super) fn draw_help(grid: &mut Grid) {
             "Shift+Enter  ←→↑↓",
             "new line · move in a message (long ones open an editor)",
         ),
-        ("F1-F6  1-6", "overview · agents · perms · log · setup · read"),
+        (
+            "F1-F6  1-6",
+            "overview · agents · perms · log · setup · read",
+        ),
         ("r", "read the selected agent's conversation full screen"),
         ("j k  ↓ ↑", "select agent · s start/stop · e open in editor"),
         (
@@ -54,7 +57,10 @@ pub(super) fn draw_help(grid: &mut Grid) {
             ":new <g> <n> [p]: <task>",
             "create an agent (p = provider label, F5) · \" | persona\"",
         ),
-        (":color [agent] <color>", "its lines and name in a colour · auto · none"),
+        (
+            ":color [agent] <color>",
+            "its lines and name in a colour · auto · none",
+        ),
         (
             ":persona [agent]: <who>",
             "who the agent is; agents ask teammates with ask_agent",
@@ -66,6 +72,10 @@ pub(super) fn draw_help(grid: &mut Grid) {
             "open the agent's worktree · :edit project",
         ),
         (":key <service>", "store an API key in the Secret Service"),
+        (
+            ":compact <n%|off>",
+            "context fill at which agents go on with a summary (85%)",
+        ),
         (
             ":model [id]  :fallback",
             "the agent's model · order on usage limits (auto, reset)",

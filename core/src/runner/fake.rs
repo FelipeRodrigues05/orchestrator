@@ -1,6 +1,6 @@
 //! Scripted runner for tests: echoes messages, `perm:<command>` asks the broker to
 //! run `<command>` and reports the decision, `ask:<agent>:<message>` asks a teammate,
-//! `limit:` fails like a provider out of quota.
+//! `limit:` fails like a provider out of quota, `full:` fills 90% of the context.
 //! Turns run one after another, like a real agent's.
 
 use async_trait::async_trait;
@@ -43,6 +43,13 @@ impl AgentRunner for FakeRunner {
                 if script == "nomodel:" {
                     let error = r#"Internal error: {"message": "{\"error\":{\"message\":\"The 'fake-1' model requires a newer version of Codex.\"}}"}"#;
                     let _ = events.send(AgentEvent::Error(error.into())).await;
+                    continue;
+                }
+                if script == "full:" {
+                    let _ = events.send(AgentEvent::Context { used: 180_000, size: 200_000 }).await;
+                    let _ = events.send(AgentEvent::Cost(250_000)).await;
+                    let _ = events.send(AgentEvent::Text("done with a big file\n".into())).await;
+                    let _ = events.send(AgentEvent::TurnEnd { stop_reason: "EndTurn".into() }).await;
                     continue;
                 }
                 if script == "limit:" {

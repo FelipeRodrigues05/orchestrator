@@ -176,22 +176,35 @@ impl AgentRunner for McpCliRunner {
 fn translate(message: &Value, titles: &mut HashMap<String, String>) -> Vec<AgentEvent> {
     let blocks = || message["message"]["content"].as_array().into_iter().flatten();
     match message["type"].as_str() {
-        Some("assistant") => blocks()
-            .filter_map(|block| match block["type"].as_str() {
-                Some("text") => {
-                    let text = block["text"].as_str().unwrap_or_default().trim();
-                    (!text.is_empty()).then(|| AgentEvent::Text(format!("{text}\n")))
-                }
-                Some("thinking") => block["thinking"].as_str().map(|t| AgentEvent::Thought(t.to_owned())),
-                Some("tool_use") => {
-                    let name = block["name"].as_str().unwrap_or("tool");
-                    let title = format!("{name} {}", crate::model::input_summary(&block["input"]));
-                    titles.insert(block["id"].as_str().unwrap_or_default().to_owned(), title.clone());
-                    Some(AgentEvent::Tool { title, status: ToolStatus::Started })
-                }
-                _ => None,
-            })
-            .collect(),
+        Some("assistant") => {
+            let mut events: Vec<AgentEvent> = blocks()
+                .filter_map(|block| match block["type"].as_str() {
+                    Some("text") => {
+                        let text = block["text"].as_str().unwrap_or_default().trim();
+                        (!text.is_empty()).then(|| AgentEvent::Text(format!("{text}\n")))
+                    }
+                    Some("thinking") => block["thinking"].as_str().map(|t| AgentEvent::Thought(t.to_owned())),
+                    Some("tool_use") => {
+                        let name = block["name"].as_str().unwrap_or("tool");
+                        let title = format!("{name} {}", crate::model::input_summary(&block["input"]));
+                        titles.insert(block["id"].as_str().unwrap_or_default().to_owned(), title.clone());
+                        Some(AgentEvent::Tool { title, status: ToolStatus::Started })
+                    }
+                    _ => None,
+                })
+                .collect();
+            // What this call sent is what the context holds now.
+            let usage = &message["message"]["usage"];
+            let used = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+                .iter()
+                .filter_map(|key| usage[*key].as_u64())
+                .sum::<u64>();
+            if used > 0 {
+                let model = message["message"]["model"].as_str().unwrap_or_default();
+                events.push(AgentEvent::Context { used, size: claude_context_size(model) });
+            }
+            events
+        }
         Some("user") => blocks()
             .filter(|block| block["type"] == "tool_result")
             .map(|block| {
@@ -209,6 +222,9 @@ fn translate(message: &Value, titles: &mut HashMap<String, String>) -> Vec<Agent
                     + usage["cache_read_input_tokens"].as_u64().unwrap_or(0),
                 output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
             })];
+            if let Some(cost) = message["total_cost_usd"].as_f64() {
+                events.push(AgentEvent::Cost(dollars_to_micros(cost)));
+            }
             if message["is_error"].as_bool().unwrap_or(false) {
                 let error = message["result"].as_str().unwrap_or("the turn failed").to_owned();
                 events.push(AgentEvent::Error(error));
@@ -219,6 +235,16 @@ fn translate(message: &Value, titles: &mut HashMap<String, String>) -> Vec<Agent
         }
         _ => Vec::new(),
     }
+}
+
+/// Claude's context window: 1M for the `[1m]` variants, 200k otherwise.
+fn claude_context_size(model: &str) -> u64 {
+    if model.contains("[1m]") || model.contains("-1m") { 1_000_000 } else { 200_000 }
+}
+
+/// Dollars as millionths, the unit costs are kept in.
+pub(crate) fn dollars_to_micros(dollars: f64) -> u64 {
+    if dollars.is_finite() && dollars > 0.0 { (dollars * 1_000_000.0).round() as u64 } else { 0 }
 }
 
 #[cfg(test)]
@@ -255,6 +281,17 @@ mod tests {
                 AgentEvent::TurnEnd { stop_reason: "success".into() },
             ]
         );
+    }
+
+    #[test]
+    fn context_and_cost_come_from_the_stream() {
+        let mut titles = HashMap::new();
+        let reply = json!({ "type": "assistant", "message": { "model": "claude-opus-5-5", "content": [],
+            "usage": { "input_tokens": 1200, "cache_read_input_tokens": 90_000, "cache_creation_input_tokens": 800 } } });
+        assert_eq!(translate(&reply, &mut titles), vec![AgentEvent::Context { used: 92_000, size: 200_000 }]);
+        let end = json!({ "type": "result", "subtype": "success", "is_error": false, "total_cost_usd": 0.4213,
+            "usage": { "input_tokens": 1, "output_tokens": 1 } });
+        assert!(translate(&end, &mut titles).contains(&AgentEvent::Cost(421_300)));
     }
 
     #[test]
@@ -315,6 +352,8 @@ mod smoke {
             model: None,
             models: Vec::new(),
             color: None,
+            context: None,
+            cost_micros: 0,
         };
         let mut runner = McpCliRunner::new(context);
         runner.start(&agent, "").await.unwrap();

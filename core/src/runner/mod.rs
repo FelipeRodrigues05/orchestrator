@@ -46,6 +46,13 @@ pub enum AgentEvent {
     },
     /// Tokens spent by the last model call or turn.
     Usage(crate::model::Usage),
+    /// How full the context window is (`size` 0: unknown).
+    Context {
+        used: u64,
+        size: u64,
+    },
+    /// What the current run has cost so far, in millionths of a dollar.
+    Cost(u64),
     /// The models the agent can use and the one it uses now.
     Models {
         current: Option<String>,

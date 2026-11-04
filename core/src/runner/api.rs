@@ -201,6 +201,8 @@ mod smoke {
             model: None,
             models: Vec::new(),
             color: None,
+            context: None,
+            cost_micros: 0,
         };
         let mut runner = ApiRunner::new(context);
         runner.start(&agent, "").await.unwrap();

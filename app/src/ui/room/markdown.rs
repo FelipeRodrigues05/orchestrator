@@ -5,11 +5,50 @@
 
 use orch_core::model::{LogEntry, LogLevel};
 
-use super::{ACCENT, DIM, FAINT, FRAME, TEXT, TITLE, WARN, s};
+use super::{ACCENT, DIM, ERROR, FAINT, FRAME, TEXT, TITLE, WARN, s};
 use crate::ui::grid::Style;
 
 /// One shown row, already styled.
 pub(super) type Row = Vec<(String, Style)>;
+
+/// The styles text is drawn with: the console's own, or an agent's colour in the
+/// event log (where every part of its line keeps that colour).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Ink {
+    pub text: Style,
+    pub title: Style,
+    /// Bullets and list numbers.
+    pub mark: Style,
+    pub code: Style,
+}
+
+impl Ink {
+    pub const ROOM: Ink = Ink {
+        text: TEXT,
+        title: TITLE,
+        mark: ACCENT,
+        code: ACCENT,
+    };
+
+    /// Everything in one colour; emphasis in bold.
+    pub fn plain(base: Style) -> Ink {
+        Ink {
+            text: base,
+            title: base.bold(),
+            mark: base,
+            code: base.bold(),
+        }
+    }
+}
+
+/// One log line (no code-block context) at `width`: inline Markdown styled with `ink`.
+pub(super) fn log_rows(entry: &LogEntry, ink: Ink, width: usize) -> Vec<Row> {
+    let text = entry.text.as_str();
+    if text.trim_start().starts_with("```") {
+        return vec![vec![s(text.trim().to_owned(), FAINT)]];
+    }
+    line(entry, text, width.max(8), ink)
+}
 
 /// Rows of `entries` (one agent's log lines, oldest first) at `width` columns.
 pub(super) fn render(entries: &[&LogEntry], width: usize) -> Vec<Row> {
@@ -21,8 +60,8 @@ pub(super) fn render(entries: &[&LogEntry], width: usize) -> Vec<Row> {
         if entry.level == LogLevel::Operator {
             code = None;
             push_gap(&mut rows);
-            let text = styled(&entry.text, TEXT.bold());
-            let mut lines = wrap(prefixed(&s("› ", ACCENT.bold()), text), width, 2);
+            let text = styled(&entry.text, TEXT.bold(), ACCENT);
+            let mut lines = wrap(prefixed(&s("you › ", ACCENT.bold()), text), width, 6);
             rows.append(&mut lines);
             push_gap(&mut rows);
             continue;
@@ -63,7 +102,7 @@ pub(super) fn render(entries: &[&LogEntry], width: usize) -> Vec<Row> {
             }
             continue;
         }
-        rows.append(&mut line(entry, text, width));
+        rows.append(&mut line(entry, text, width, Ink::ROOM));
     }
     if code.is_some() {
         // An answer still streaming: close the box so it reads as one.
@@ -73,31 +112,36 @@ pub(super) fn render(entries: &[&LogEntry], width: usize) -> Vec<Row> {
 }
 
 /// One line outside code blocks.
-fn line(entry: &LogEntry, text: &str, width: usize) -> Vec<Row> {
+fn line(entry: &LogEntry, text: &str, width: usize, ink: Ink) -> Vec<Row> {
     let trimmed = text.trim_start();
     let indent = text.len() - trimmed.len();
     // Tool calls and turn ends, as the runtime logs them.
     if trimmed.starts_with('▸') || trimmed.starts_with('■') {
-        return wrap(styled(trimmed, FAINT), width, 2);
+        return wrap(styled(trimmed, FAINT, FAINT), width, 2);
     }
     if trimmed.starts_with('✖') || matches!(entry.level, LogLevel::Warn | LogLevel::Error) {
-        return wrap(styled(trimmed, WARN), width, 2);
+        let red = if entry.level == LogLevel::Error {
+            ERROR
+        } else {
+            WARN
+        };
+        return wrap(styled(trimmed, red, red.bold()), width, 2);
     }
     if trimmed.is_empty() {
         return vec![Vec::new()];
     }
     if let Some(title) = heading(trimmed) {
-        return wrap(styled(title, TITLE), width, 0);
+        return wrap(styled(title, ink.title, ink.code), width, 0);
     }
     if trimmed.chars().all(|c| matches!(c, '-' | '*' | '_' | ' ')) && trimmed.len() >= 3 {
         return vec![vec![s("─".repeat(width), FAINT)]];
     }
     if trimmed.starts_with('|') {
-        return table_row(trimmed, width);
+        return table_row(trimmed, width, ink);
     }
     if let Some(quote) = trimmed.strip_prefix('>') {
         return wrap(
-            prefixed(&s("▌ ", DIM), styled(quote.trim_start(), DIM)),
+            prefixed(&s("▌ ", DIM), styled(quote.trim_start(), DIM, ink.code)),
             width,
             2,
         );
@@ -105,9 +149,9 @@ fn line(entry: &LogEntry, text: &str, width: usize) -> Vec<Row> {
     let pad = " ".repeat(indent.min(8));
     for marker in ["- ", "* ", "+ "] {
         if let Some(item) = trimmed.strip_prefix(marker) {
-            let bullet = s(format!("{pad}• "), ACCENT);
+            let bullet = s(format!("{pad}• "), ink.mark);
             return wrap(
-                prefixed(&bullet, styled(item, TEXT)),
+                prefixed(&bullet, styled(item, ink.text, ink.code)),
                 width,
                 indent.min(8) + 2,
             );
@@ -119,10 +163,14 @@ fn line(entry: &LogEntry, text: &str, width: usize) -> Vec<Row> {
     {
         let label = format!("{pad}{number}. ");
         let hang = label.chars().count();
-        return wrap(prefixed(&s(label, ACCENT), styled(item, TEXT)), width, hang);
+        return wrap(
+            prefixed(&s(label, ink.mark), styled(item, ink.text, ink.code)),
+            width,
+            hang,
+        );
     }
     wrap(
-        prefixed(&s(pad, TEXT), styled(trimmed, TEXT)),
+        prefixed(&s(pad, ink.text), styled(trimmed, ink.text, ink.code)),
         width,
         indent.min(8),
     )
@@ -139,7 +187,7 @@ fn heading(line: &str) -> Option<&str> {
 }
 
 /// `| a | b |` with drawn rails; `|---|---|` becomes a rule.
-fn table_row(line: &str, width: usize) -> Vec<Row> {
+fn table_row(line: &str, width: usize, ink: Ink) -> Vec<Row> {
     if line.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')) {
         let rule = line
             .trim()
@@ -153,7 +201,7 @@ fn table_row(line: &str, width: usize) -> Vec<Row> {
         if index > 0 {
             chars.push(('│', FRAME));
         }
-        chars.extend(styled(cell, TEXT));
+        chars.extend(styled(cell, ink.text, ink.code));
     }
     wrap(chars, width, 2)
 }
@@ -172,7 +220,7 @@ fn prefixed(prefix: &(String, Style), mut rest: Vec<(char, Style)>) -> Vec<(char
 }
 
 /// Inline Markdown: `**bold**` and `` `code` `` change the style; the markers go.
-fn styled(text: &str, base: Style) -> Vec<(char, Style)> {
+fn styled(text: &str, base: Style, code_style: Style) -> Vec<(char, Style)> {
     let mut out = Vec::new();
     let (mut bold, mut code) = (false, false);
     let mut chars = text.chars().peekable();
@@ -185,7 +233,7 @@ fn styled(text: &str, base: Style) -> Vec<(char, Style)> {
             }
             c => {
                 let style = match (code, bold) {
-                    (true, _) => ACCENT,
+                    (true, _) => code_style,
                     (false, true) => base.bold(),
                     (false, false) => base,
                 };

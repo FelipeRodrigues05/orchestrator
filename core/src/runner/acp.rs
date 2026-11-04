@@ -353,6 +353,13 @@ fn translate(update: SessionUpdate, titles: &Mutex<HashMap<String, String>>) -> 
         SessionUpdate::AgentThoughtChunk(chunk) => {
             text_of(chunk.content).map(AgentEvent::Thought).into_iter().collect()
         }
+        SessionUpdate::UsageUpdate(usage) => {
+            let mut events = vec![AgentEvent::Context { used: usage.used, size: usage.size }];
+            if let Some(cost) = usage.cost.filter(|c| c.currency.eq_ignore_ascii_case("usd")) {
+                events.push(AgentEvent::Cost(super::mcp_cli::dollars_to_micros(cost.amount)));
+            }
+            events
+        }
         SessionUpdate::ToolCall(call) => {
             titles
                 .lock()
@@ -488,6 +495,8 @@ mod tests {
             model: None,
             models: Vec::new(),
             color: None,
+            context: None,
+            cost_micros: 0,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();
@@ -539,6 +548,8 @@ mod tests {
             model: None,
             models: Vec::new(),
             color: None,
+            context: None,
+            cost_micros: 0,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();
@@ -607,6 +618,8 @@ mod tests {
             model: None,
             models: Vec::new(),
             color: None,
+            context: None,
+            cost_micros: 0,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();
@@ -667,6 +680,8 @@ mod tests {
             model: Some(wanted.clone()),
             models: Vec::new(),
             color: None,
+            context: None,
+            cost_micros: 0,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();

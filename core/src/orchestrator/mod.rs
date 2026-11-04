@@ -36,6 +36,8 @@ use crate::{
 };
 
 const MAX_LOG: usize = 2000;
+/// Context fill (percent) at which an agent goes on with a summary of its conversation.
+const COMPACT_AT: u64 = 85;
 /// How many recently opened projects the open-project list offers.
 const RECENT_PROJECTS: usize = 20;
 const PUBLISH_EVERY: Duration = Duration::from_millis(100);
@@ -69,6 +71,8 @@ pub enum Command {
     /// The fallback order on usage limits: `claude/opus, codex/gpt-6-astra, ollama`;
     /// `auto` goes by closeness, `reset` forgets which models hit their limit.
     SetFallback(String),
+    /// Context fill (percent) at which agents go on with a summary; `None`: never.
+    SetCompactAt(Option<u64>),
     /// Asks the agent's provider which models it offers (the list then shows up in
     /// `Agent::models`), also while the agent is stopped.
     ProbeModels(Uuid),
@@ -78,7 +82,10 @@ pub enum Command {
         model: String,
     },
     /// The colour the agent's lines are painted in (`None`: picked from its id).
-    SetColor { agent: Uuid, color: Option<String> },
+    SetColor {
+        agent: Uuid,
+        color: Option<String>,
+    },
     /// Changes who the agent is; it takes effect on its next start.
     SetPersona {
         agent: Uuid,
@@ -285,6 +292,10 @@ struct Orchestrator {
     mcp: Option<crate::mcp::McpHandle>,
     /// Saved UI layout of each open project.
     layouts: HashMap<Uuid, Option<String>>,
+    /// Cost of an agent's earlier runs (each CLI session counts from zero).
+    cost_base: HashMap<Uuid, u64>,
+    /// Context fill (percent) at which an agent goes on with a summary; `None`: never.
+    compact_at: Option<u64>,
     /// Picks another model when an agent hits its usage limit.
     router: crate::router::Router,
     /// The personal workspace (`Config::workspace`).
@@ -367,6 +378,8 @@ pub async fn run_with(
         layouts: HashMap::new(),
         workspace: config.workspace,
         router: crate::router::Router::default(),
+        cost_base: HashMap::new(),
+        compact_at: Some(COMPACT_AT),
         team,
         turns: HashMap::new(),
         asking: HashMap::new(),
@@ -428,6 +441,9 @@ impl Orchestrator {
         }
         if let (Some(id), Some(voice)) = (store.setting("voice").await, &self.voice) {
             voice.set_voice(Some(id));
+        }
+        if let Some(compact) = store.setting("compact_at").await {
+            self.compact_at = compact.parse().ok();
         }
         if let Some(chain) = store.setting("fallback_chain").await {
             self.router.chain = parse_chain(&chain);

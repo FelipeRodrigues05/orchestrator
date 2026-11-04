@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use orch_core::model::AgentState;
 
-use super::format::{clock, format_rtt, format_tokens, lamp_for};
+use super::format::{clock, format_cost, format_rtt, format_tokens, lamp_for};
 use super::pages::{draw_help, draw_setup};
 use super::panels::draw_log;
 use super::{
@@ -198,6 +198,10 @@ impl Room {
             spans.push(s("═ ", FRAME));
             spans.push(s("TOK ", DIM));
             spans.push(s(format_tokens(tokens), TEXT));
+            let cost: u64 = state.agents.iter().map(|a| a.cost_micros).sum();
+            if cost > 0 {
+                spans.push(s(format!(" {}", format_cost(cost)), TEXT));
+            }
             spans.push(s(" ═ ", FRAME));
         }
         spans.push(s("AGENTS", DIM));

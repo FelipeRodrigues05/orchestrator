@@ -39,6 +39,8 @@ pub fn sample_state() -> AppState {
         model: None,
         models: Vec::new(),
         color: None,
+        context: None,
+        cost_micros: 0,
     };
     let backend =
         agent(&api, "Backend", "implement the /pix handler", "claude-code-acp", AgentState::Running, Some(7 * 60 + 14));

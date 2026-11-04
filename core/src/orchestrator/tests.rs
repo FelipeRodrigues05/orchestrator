@@ -281,7 +281,8 @@ async fn the_briefing_names_the_persona_and_the_team() {
     let state = room.until(|s| agent_lines(s, tests).iter().any(|l| l.starts_with("echo:"))).await;
     let briefing = agent_lines(&state, tests).join("\n");
     assert!(briefing.contains("Who you are: only writes tests"), "{briefing}");
-    assert!(briefing.contains("- Backend (group API, Stopped): Backend specialist"), "{briefing}");
+    assert!(briefing.contains("- Backend (API): Backend specialist"), "{briefing}");
+    assert!(briefing.contains("Answer briefly"), "{briefing}");
     assert!(briefing.contains("ask_agent"), "{briefing}");
 }
 
@@ -377,4 +378,27 @@ async fn a_model_the_cli_cannot_run_is_replaced_within_the_same_cli() {
     assert!(lines.iter().any(|l| l == "The 'fake-1' model requires a newer version of Codex."), "{lines:?}");
     assert!(lines.iter().any(|l| l.contains("fake/fake-1 cannot run here → going on with fake/fake-2")));
     assert!(!lines.iter().any(|l| l.contains("updating")));
+}
+
+#[tokio::test]
+async fn a_full_context_goes_on_with_a_summary_and_costs_add_up() {
+    let room = room();
+    let state = room.staffed().await;
+    let tests = state.agents.iter().find(|a| a.name == "Tests").unwrap().id;
+    room.send(Command::Message { agent: tests, text: "refactor the handler".into() }).await;
+    room.until(|s| agent_lines(s, tests).iter().any(|l| l.starts_with("echo:"))).await;
+    room.send(Command::Message { agent: tests, text: "full:".into() }).await;
+    // Past 85%: restarted with the conversation summarised, tool and app lines left out.
+    let state =
+        room.until(|s| agent_lines(s, tests).iter().any(|l| l.contains("earlier conversation was summarised"))).await;
+    let lines = agent_lines(&state, tests);
+    assert!(lines.iter().any(|l| l.contains("context 90% full → going on with a summary")));
+    let summary = lines.join("\n");
+    assert!(summary.contains("Operator: refactor the handler"), "{summary}");
+    assert!(!summary.contains("Agent: starting with"), "{summary}");
+    // The first run's cost stays counted after the restart.
+    assert_eq!(state.agent(tests).unwrap().cost_micros, 250_000);
+
+    room.send(Command::SetCompactAt(None)).await;
+    room.until(|s| s.log.iter().any(|e| e.text.contains("keep their whole context"))).await;
 }

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::{AgentCmd, Internal, Orchestrator};
 use crate::{
-    model::{Agent, AgentState, LogLevel, Provider},
+    model::{Agent, AgentState, ContextUse, LogLevel, Provider},
     router::{self, Candidate},
     runner::{AgentEvent, AgentRunner, RunnerContext, ToolStatus, update},
     voice::{Priority, phrases::Phrase},
@@ -123,13 +123,23 @@ impl Orchestrator {
 
     /// The prompt for a new provider taking over: task plus the conversation so far.
     pub(super) fn handoff(&self, id: Uuid, previous: &str) -> Option<String> {
+        let note = format!(
+            "You are taking over this task from another model ({previous}). The working directory already holds \
+             its changes; check them before going on."
+        );
+        self.continuation(id, &note)
+    }
+
+    /// The briefing, `note`, and the conversation so far in brief: what an agent
+    /// restarts with. Tool calls and the app's own lines are left out.
+    fn continuation(&self, id: Uuid, note: &str) -> Option<String> {
         let agent = self.state.agent(id)?;
         let group = self.state.group(agent.group_id)?;
         let lines: Vec<String> = self
             .state
             .log
             .iter()
-            .filter(|e| e.agent_id == Some(id))
+            .filter(|e| e.agent_id == Some(id) && is_conversation(e))
             .map(|e| {
                 let who = if e.level == LogLevel::Operator { "Operator" } else { "Agent" };
                 let text: String = e.text.chars().take(300).collect();
@@ -138,9 +148,7 @@ impl Orchestrator {
             .collect();
         let recent = &lines[lines.len().saturating_sub(60)..];
         Some(format!(
-            "{}\n\nYou are taking over this task from another model ({previous}). \
-             The working directory already holds its changes; check them before going on. \
-             The conversation so far:\n{}\n\nContinue from where it stopped.",
+            "{}\n\n{note}\nThe conversation so far:\n{}\n\nContinue from where it stopped.",
             self.briefing(agent, group),
             recent.join("\n")
         ))
@@ -257,6 +265,28 @@ impl Orchestrator {
         if let Some(prompt) = self.handoff(id, &from) {
             self.restart_with(id, prompt);
         }
+    }
+
+    /// A full context is costly and degrades answers: past `compact_at`, the agent
+    /// restarts with its briefing and a summary of the conversation.
+    fn compact_if_full(&mut self, id: Uuid) {
+        let (Some(limit), true) = (self.compact_at, self.running.contains_key(&id)) else { return };
+        let Some(percent) = self.state.agent(id).and_then(|a| a.context).and_then(|c| c.percent()) else { return };
+        if percent < limit {
+            return;
+        }
+        let note = "Your earlier conversation was summarised to save tokens; the working directory holds everything \
+                    done so far.";
+        let Some(prompt) = self.continuation(id, note) else { return };
+        self.log(
+            Some(id),
+            LogLevel::Info,
+            &format!("context {percent}% full → going on with a summary to save tokens"),
+        );
+        if let Some(agent) = self.agent_mut(id) {
+            agent.context = None;
+        }
+        self.restart_with(id, prompt);
     }
 
     pub(super) fn set_provider(&mut self, id: Uuid, wanted: &str) {
@@ -392,6 +422,17 @@ impl Orchestrator {
                 self.output(id, &text);
             }
             AgentEvent::Thought(_) => {}
+            AgentEvent::Context { used, size } => {
+                if let Some(agent) = self.agent_mut(id) {
+                    agent.context = Some(ContextUse { used, size });
+                }
+            }
+            AgentEvent::Cost(run) => {
+                let base = self.cost_base.get(&id).copied().unwrap_or(0);
+                if let Some(agent) = self.agent_mut(id) {
+                    agent.cost_micros = base + run;
+                }
+            }
             AgentEvent::Models { current, available } => {
                 if let Some(label) = self.state.agent(id).and_then(|a| self.candidate_of(a)).map(|c| c.label) {
                     self.router.learn_models(&label, available.clone());
@@ -428,6 +469,7 @@ impl Orchestrator {
                 }
                 self.log(Some(id), LogLevel::Info, &format!("■ turn finished ({stop_reason})"));
                 self.turn_ended(id);
+                self.compact_if_full(id);
                 self.pump();
                 self.announce(Priority::Done, Phrase::Done { agent: name, group });
             }
@@ -474,6 +516,10 @@ impl Orchestrator {
             }
             AgentEvent::Exited => {
                 self.running.remove(&id);
+                // The next run's cost counts from zero again.
+                if let Some(agent) = self.state.agent(id) {
+                    self.cost_base.insert(id, agent.cost_micros);
+                }
                 self.turns_lost(id, "stopped");
                 self.open_lines.remove(&id);
                 if let Some(agent) = self.agent_mut(id) {
@@ -551,4 +597,25 @@ pub(super) enum Reason {
     Limit,
     /// The CLI cannot run the model (an adapter older than the model, say).
     UnsupportedModel,
+}
+
+/// A line of the conversation itself: what the operator and the agent said, not
+/// tool calls or the app's own notes.
+fn is_conversation(entry: &crate::model::LogEntry) -> bool {
+    const APP: [&str; 12] = [
+        "▸",
+        "■",
+        "✖",
+        "starting with",
+        "model:",
+        "provider:",
+        "stopped",
+        "session started",
+        "limit reached",
+        "asking its CLI",
+        "context ",
+        "waiting for a slot",
+    ];
+    matches!(entry.level, LogLevel::Operator | LogLevel::Info)
+        && !APP.iter().any(|prefix| entry.text.trim_start().starts_with(prefix))
 }

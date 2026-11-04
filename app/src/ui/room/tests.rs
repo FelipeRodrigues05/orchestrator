@@ -3,7 +3,7 @@ use orch_core::{
     sample_data::sample_state,
 };
 
-use super::{panels::wrap, *};
+use super::*;
 
 fn text(grid: &Grid) -> String {
     (0..grid.rows)
@@ -208,16 +208,6 @@ fn palette_opens_and_runs_a_view() {
 
 #[test]
 fn long_log_lines_wrap_under_their_text() {
-    let rows = wrap(
-        "Cara, seguinte, eu preciso que você crie dois agentes para o projeto",
-        24,
-    );
-    assert!(rows.len() > 1 && rows.iter().all(|r| r.chars().count() <= 24));
-    assert_eq!(
-        rows.join(" "),
-        "Cara, seguinte, eu preciso que você crie dois agentes para o projeto"
-    );
-
     let mut state = sample_state();
     let long = "heard: ".to_owned() + &"palavra ".repeat(60) + "FIM";
     state.log.push(LogEntry {
@@ -482,4 +472,65 @@ fn agents_paint_their_log_lines_in_their_colour() {
     );
     type_line(&mut room, ":color vermelho");
     assert!(room.drain().is_empty());
+}
+
+#[test]
+fn the_event_log_reads_markdown_in_the_agents_colour() {
+    let mut state = sample_state();
+    state.permissions.clear();
+    let agent = state.agents[0].clone();
+    state.agents[0].color = Some("yellow".into());
+    let line = |text: &str| LogEntry {
+        at: chrono::Utc::now(),
+        agent_id: Some(agent.id),
+        level: LogLevel::Info,
+        text: text.into(),
+    };
+    state.log = vec![
+        line("**Plan status.** `PLAN.md` already exists. It has 9 phases"),
+        line("- migrations, extraction with SSRF protection"),
+        line("1. **Auth:** keep Fortify"),
+    ];
+    let mut room = Room::new();
+    room.set_state(state);
+    room.key(Key::Function(4));
+    let screen = text(&room.compose(140, 40));
+    assert!(
+        screen.contains("Plan status. PLAN.md already exists"),
+        "{screen}"
+    );
+    assert!(screen.contains("• migrations, extraction"), "{screen}");
+    assert!(screen.contains("1. Auth: keep Fortify"), "{screen}");
+    assert!(!screen.contains("**") && !screen.contains('`'), "{screen}");
+}
+
+#[test]
+fn the_log_tells_the_operator_from_the_agent() {
+    let mut state = sample_state();
+    state.permissions.clear();
+    let agent = state.agents[0].clone();
+    let line = |level, text: &str| LogEntry {
+        at: chrono::Utc::now(),
+        agent_id: Some(agent.id),
+        level,
+        text: text.into(),
+    };
+    state.log = vec![
+        line(LogLevel::Operator, "stop working"),
+        line(LogLevel::Info, "stopping now"),
+    ];
+    let mut room = Room::new();
+    room.set_state(state);
+    room.key(Key::Function(4));
+    let screen = text(&room.compose(140, 40));
+    let row = |needle: &str| {
+        screen
+            .lines()
+            .find(|l| l.contains(needle))
+            .unwrap()
+            .to_owned()
+    };
+    assert!(row("stop working").contains("you›"), "{screen}");
+    assert!(row("stopping now").contains(&agent.name), "{screen}");
+    assert!(!row("stopping now").contains("you"), "{screen}");
 }

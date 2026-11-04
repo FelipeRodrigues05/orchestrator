@@ -14,29 +14,30 @@ impl Orchestrator {
     /// What an agent is told when it starts: who it is, the goal, its task, its team.
     pub(super) fn briefing(&self, agent: &Agent, group: &Group) -> String {
         let project = self.state.project_of_group(group.id).map_or("the project", |p| p.name.as_str());
-        let mut prompt = format!("You are {}, an agent of project {project}, group {}.", agent.name, group.name);
+        let mut prompt = format!("You are {} (project {project}, group {}).", agent.name, group.name);
         if !agent.persona.is_empty() {
             let _ = write!(prompt, "\nWho you are: {}", agent.persona);
         }
         if !group.goal.is_empty() {
-            let _ = write!(prompt, "\n\nGroup goal: {}", group.goal);
+            let _ = write!(prompt, "\nGroup goal: {}", group.goal);
         }
-        let _ = write!(prompt, "\n\nYour task: {}", agent.task);
-        prompt
-            .push_str("\nPaths written as @path/to/file are files of the project, relative to your working directory.");
-        let team = self.roster(agent.id);
+        let _ = write!(prompt, "\nYour task: {}", agent.task);
+        // Short answers save the most tokens: output costs more than input.
+        prompt.push_str(
+            "\nAnswer briefly: what you did, what is left, what you need. Do not restate the task or paste whole \
+             files. @path/to/file names a file of the project.",
+        );
+        let team = self.roster(agent.id, true);
         if !team.is_empty() {
-            let _ = write!(
-                prompt,
-                "\n\nYour teammates in this project:\n{team}\nWhen one of them owns what you need, ask it with the \
-                 ask_agent tool (list_agents shows the team now) instead of doing its part yourself."
-            );
+            let _ = write!(prompt, "\nTeammates (ask_agent to ask one, list_agents for details):\n{team}");
         }
         prompt
     }
 
     /// The other agents of `agent`'s project, one per line; empty when it works alone.
-    pub(super) fn roster(&self, agent: Uuid) -> String {
+    /// `brief`: name, group and the first sentence of its role, for briefings; the
+    /// `list_agents` tool gets everything.
+    pub(super) fn roster(&self, agent: Uuid, brief: bool) -> String {
         let project = self.state.project_of_agent(agent).map(|p| p.id);
         self.state
             .agents_of(project)
@@ -44,7 +45,11 @@ impl Orchestrator {
             .map(|a| {
                 let group = self.state.group(a.group_id).map_or("?", |g| g.name.as_str());
                 let who = if a.persona.is_empty() { a.task.as_str() } else { a.persona.as_str() };
-                format!("- {} (group {group}, {:?}): {who}", a.name, a.state)
+                if brief {
+                    format!("- {} ({group}): {}", a.name, first_sentence(who, 80))
+                } else {
+                    format!("- {} (group {group}, {:?}): {who}", a.name, a.state)
+                }
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -53,7 +58,7 @@ impl Orchestrator {
     pub(super) fn team_request(&mut self, request: TeamRequest) {
         match request {
             TeamRequest::Roster { from, reply } => {
-                let roster = self.roster(from);
+                let roster = self.roster(from, false);
                 let _ = reply.send(if roster.is_empty() {
                     "You have no teammates in this project.".into()
                 } else {
@@ -164,4 +169,14 @@ impl Orchestrator {
             let _ = reply.send(Err(format!("{name} {why} before answering")));
         }
     }
+}
+
+/// The text up to its first full stop, at most `limit` characters.
+fn first_sentence(text: &str, limit: usize) -> String {
+    let sentence = text.split_once(". ").map_or(text, |(first, _)| first).trim_end_matches('.');
+    if sentence.chars().count() <= limit {
+        return sentence.to_owned();
+    }
+    let cut: String = sentence.chars().take(limit).collect();
+    format!("{}…", cut.trim_end())
 }

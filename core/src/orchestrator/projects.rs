@@ -235,6 +235,8 @@ impl Orchestrator {
             model: None,
             models: Vec::new(),
             color: None,
+            context: None,
+            cost_micros: 0,
             provider,
             state: AgentState::Stopped,
             rules: Vec::new(),

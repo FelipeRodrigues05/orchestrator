@@ -81,6 +81,16 @@ impl Room {
                 WARN,
             ),
             "fallback" => self.outbox.push(Command::SetFallback(rest.to_owned())),
+            // `:compact 80` · `:compact off`: when agents go on with a summary.
+            "compact" => match rest {
+                "off" | "none" => self.outbox.push(Command::SetCompactAt(None)),
+                percent => match percent.trim_end_matches('%').parse::<u64>() {
+                    Ok(p) if (30..=99).contains(&p) => {
+                        self.outbox.push(Command::SetCompactAt(Some(p)));
+                    }
+                    _ => self.say("usage: :compact <30-99>% | off", WARN),
+                },
+            },
             "limit" => self.limit_command(rest),
             "timeout" => match rest.parse::<u64>() {
                 Ok(minutes) if minutes > 0 => {

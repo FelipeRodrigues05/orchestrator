@@ -56,6 +56,13 @@ pub struct Agent {
     /// `none` for plain text, `None` for one picked from its id.
     #[serde(default)]
     pub color: Option<String>,
+    /// How full its context window is, when the CLI says.
+    #[serde(default)]
+    pub context: Option<ContextUse>,
+    /// What it has cost since the app started, in millionths of a dollar, when
+    /// the provider says.
+    #[serde(default)]
+    pub cost_micros: u64,
     pub worktree: PathBuf,
     pub state: AgentState,
     pub rules: Vec<PermissionRule>,
@@ -105,6 +112,20 @@ impl Provider {
             Provider::Api { service, .. } => service,
             Provider::Local { model, .. } => model,
         }
+    }
+}
+
+/// Tokens in an agent's context window, out of its size.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextUse {
+    pub used: u64,
+    pub size: u64,
+}
+
+impl ContextUse {
+    /// Percent of the window in use; `None` when the size is unknown.
+    pub fn percent(&self) -> Option<u64> {
+        (self.size > 0).then(|| self.used.saturating_mul(100) / self.size)
     }
 }
 
