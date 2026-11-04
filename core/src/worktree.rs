@@ -46,8 +46,21 @@ pub async fn is_repository(root: &Path) -> bool {
 }
 
 /// Creates the worktree on branch `orch/<dir name>` unless it already exists.
+/// Whether `root` holds a git repository (a `.git` folder, or a `.git` file for a
+/// worktree). Folders without one get no worktrees: agents work in them directly.
+pub fn has_git(root: &Path) -> bool {
+    root.join(".git").exists()
+}
+
+/// Where an agent works: its own worktree in a git repository, the project folder
+/// itself otherwise.
+pub fn place_for(root: &Path, name: &str, id: Uuid) -> PathBuf {
+    if has_git(root) { path_for(root, name, id) } else { root.to_path_buf() }
+}
+
 pub async fn ensure(root: &Path, worktree: &Path) -> Result<(), String> {
-    if worktree.join(".git").exists() {
+    // A project without git: the agent works in the folder itself.
+    if worktree == root || worktree.join(".git").exists() {
         return Ok(());
     }
     if !is_repository(root).await {
@@ -70,6 +83,11 @@ pub async fn ensure(root: &Path, worktree: &Path) -> Result<(), String> {
 /// project's checked-out branch. On conflict the merge is aborted and the files
 /// are listed in the error.
 pub async fn merge(root: &Path, worktree: &Path, message: &str) -> Result<String, String> {
+    if worktree == root {
+        return Err(
+            "this project is not a git repository: the agent works in the folder itself, nothing to merge".into()
+        );
+    }
     if !worktree.join(".git").exists() {
         return Err("the agent has no worktree yet".into());
     }

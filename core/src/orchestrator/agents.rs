@@ -86,6 +86,20 @@ impl Orchestrator {
         if let Some(agent) = self.agent_mut(id) {
             agent.state = AgentState::Running;
         }
+        // Agents made before a project lost (or never had) git work in its folder.
+        let place = worktree::place_for(&project.root, &agent.name, id);
+        let agent = if !worktree::has_git(&project.root) && agent.worktree != place {
+            let Some(target) = self.agent_mut(id) else { return };
+            target.worktree = place;
+            let snapshot = target.clone();
+            if let Some(store) = &self.store {
+                store.save_agent(&snapshot);
+            }
+            self.log(Some(id), LogLevel::Info, "no git here: working in the project folder itself");
+            snapshot
+        } else {
+            agent
+        };
         let context = RunnerContext {
             broker: self.broker.clone(),
             group_id: group.id,

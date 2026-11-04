@@ -22,3 +22,10 @@ the biggest risk listed in `SPEC.md`.
 - Disk usage grows with the number of agents.
 - Worktree creation and cleanup are part of the agent lifecycle in the orchestrator.
 - Real isolation of shell commands needs a sandbox (bubblewrap), planned post-MVP.
+
+## Amendment (2026-11-04): folders without git
+
+A project that is not a git repository no longer stops agents. They work in the
+project folder itself, sharing it, with a warning when the project opens; `:merge`
+says there is nothing to merge. `git init` (and one commit) gives each agent its
+own worktree again. The app never initialises git in the operator's folder.

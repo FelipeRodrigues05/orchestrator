@@ -59,7 +59,10 @@ impl Orchestrator {
         self.focus_project(id);
         self.notice(LogLevel::Info, format!("opened {name}: {} groups, {} agents", counts.0, counts.1));
         if !worktree::is_repository(&root).await {
-            self.notice(LogLevel::Warn, "not a git repository: agents need one to get their worktrees");
+            self.notice(
+                LogLevel::Warn,
+                "not a git repository: agents work in the folder itself, sharing it (git init gives each its own worktree)",
+            );
         }
     }
 
@@ -228,7 +231,7 @@ impl Orchestrator {
         let agent = Agent {
             id,
             group_id: group.id,
-            worktree: worktree::path_for(&project.root, &name, id),
+            worktree: worktree::place_for(&project.root, &name, id),
             name,
             task: task.trim().to_owned(),
             persona: persona.trim().to_owned(),

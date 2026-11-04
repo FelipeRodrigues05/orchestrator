@@ -402,3 +402,31 @@ async fn a_full_context_goes_on_with_a_summary_and_costs_add_up() {
     room.send(Command::SetCompactAt(None)).await;
     room.until(|s| s.log.iter().any(|e| e.text.contains("keep their whole context"))).await;
 }
+
+#[tokio::test]
+async fn folders_without_git_are_worked_in_directly() {
+    let room = room();
+    let plain = tempfile::tempdir().unwrap();
+    room.send(Command::OpenProject { root: plain.path().into() }).await;
+    let state = room.until(|s| s.projects.len() == 1).await;
+    assert!(state.log.iter().any(|e| e.text.contains("agents work in the folder itself")));
+    let root = state.projects[0].root.clone();
+    room.send(Command::CreateGroup { name: "Site".into(), goal: String::new() }).await;
+    room.send(Command::CreateAgent {
+        group: "Site".into(),
+        name: "Kio".into(),
+        provider: Some("fake".into()),
+        task: "fix the footer".into(),
+        persona: String::new(),
+    })
+    .await;
+    let state = room.until(|s| s.agents.len() == 1).await;
+    let kio = state.agents[0].id;
+    assert_eq!(state.agents[0].worktree, root);
+    room.send(Command::Message { agent: kio, text: "go".into() }).await;
+    let state = room.until(|s| agent_lines(s, kio).iter().any(|l| l.starts_with("echo:"))).await;
+    assert!(!agent_lines(&state, kio).iter().any(|l| l.contains("not a git repository")));
+    // Nothing to merge without git, and the reason is said.
+    room.send(Command::Merge(kio)).await;
+    room.until(|s| s.log.iter().any(|e| e.text.contains("nothing to merge"))).await;
+}
