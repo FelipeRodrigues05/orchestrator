@@ -156,6 +156,7 @@ impl Room {
         if let Some(request) = self.modal().cloned() {
             self.draw_permission(&mut grid, &request, now);
         }
+        self.draw_boot(&mut grid);
         grid
     }
 

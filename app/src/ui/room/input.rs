@@ -14,6 +14,10 @@ use crate::ui::palette::{Outcome, Palette};
 
 impl Room {
     pub fn key(&mut self, key: Key) {
+        // A key during the intro only skips it.
+        if self.skip_intro() {
+            return;
+        }
         if let Some(palette) = self.palette.take() {
             self.palette_key(palette, key);
             return;
@@ -161,6 +165,9 @@ impl Room {
     }
 
     pub fn click(&mut self, col: usize, row: usize) {
+        if self.skip_intro() {
+            return;
+        }
         if self.help {
             self.help = false;
             return;

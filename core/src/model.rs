@@ -455,6 +455,8 @@ pub struct AppState {
     pub repositories: Vec<PathBuf>,
     /// The room's colour theme by name (`mono`, `amber`…); the UI knows the palettes.
     pub theme: String,
+    /// The operator turned the start-up animation off (`:intro off`).
+    pub skip_intro: bool,
 }
 
 impl AppState {

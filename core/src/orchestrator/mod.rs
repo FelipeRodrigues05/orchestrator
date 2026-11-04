@@ -75,6 +75,8 @@ pub enum Command {
     SetCompactAt(Option<u64>),
     /// The room's colour theme, by name; saved for the next start.
     SetTheme(String),
+    /// Whether the start-up animation plays.
+    SetIntro(bool),
     /// Removes a service's API key from the Secret Service.
     DeleteApiKey(String),
     /// Asks the agent's provider which models it offers (the list then shows up in
@@ -446,6 +448,7 @@ impl Orchestrator {
         if let (Some(id), Some(voice)) = (store.setting("voice").await, &self.voice) {
             voice.set_voice(Some(id));
         }
+        self.state.skip_intro = store.setting("intro").await.as_deref() == Some("off");
         if let Some(theme) = store.setting("theme").await {
             self.state.theme = theme;
         }

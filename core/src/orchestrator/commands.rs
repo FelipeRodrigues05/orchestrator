@@ -63,6 +63,13 @@ impl Orchestrator {
             Command::OpenIn { agent, editor } => self.open_in(agent, editor).await,
             Command::SetApiKey { service, key } => self.set_api_key(service, key),
             Command::DeleteApiKey(service) => self.delete_api_key(service),
+            Command::SetIntro(on) => {
+                if let Some(store) = &self.store {
+                    store.set_setting("intro", if on { "on" } else { "off" });
+                }
+                self.state.skip_intro = !on;
+                self.notice(LogLevel::Info, if on { "the start-up animation plays" } else { "no start-up animation" });
+            }
             Command::SetTheme(theme) => {
                 if let Some(store) = &self.store {
                     store.set_setting("theme", &theme);

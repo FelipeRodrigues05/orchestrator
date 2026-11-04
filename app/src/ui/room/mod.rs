@@ -4,6 +4,7 @@
 //! in it; `render` paints the grid and `mod.rs` feeds input in and sends the
 //! commands collected here to the runtime.
 
+mod boot;
 mod commands;
 mod compose;
 mod editor;
@@ -224,6 +225,9 @@ pub struct Room {
     console_scroll: Scroll,
     /// Where the mouse wheel scrolls what, from the last frame.
     scroll_areas: Vec<(Rect, Pane)>,
+    /// The start-up animation, while it plays.
+    boot: Option<boot::Boot>,
+    intro_over: bool,
 }
 
 /// A pane that scrolls.
@@ -259,6 +263,8 @@ impl Room {
             log_scroll: Scroll::default(),
             console_scroll: Scroll::default(),
             scroll_areas: Vec::new(),
+            boot: None,
+            intro_over: false,
         }
     }
 
@@ -307,6 +313,14 @@ impl Room {
         self.deferred
             .retain(|id| state.permissions.iter().any(|p| p.id == *id));
         self.link.up = true;
+        // The first state starts the intro: only now are the checks' results known.
+        if self.state.is_none() && !self.intro_over {
+            if state.skip_intro {
+                self.intro_over = true;
+            } else {
+                self.boot = Some(boot::Boot::new());
+            }
+        }
         self.state = Some(state);
     }
 

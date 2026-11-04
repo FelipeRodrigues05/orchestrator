@@ -60,7 +60,7 @@ impl Orchestrator {
         self.notice(LogLevel::Info, format!("opened {name}: {} groups, {} agents", counts.0, counts.1));
         if !worktree::is_repository(&root).await {
             self.notice(
-                LogLevel::Warn,
+                LogLevel::Info,
                 "not a git repository: agents work in the folder itself, sharing it (git init gives each its own worktree)",
             );
         }

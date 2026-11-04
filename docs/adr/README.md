@@ -37,3 +37,4 @@ architecture looks the way it does.
 | [0019](0019-desktop-install-scope-and-tray.md) | Desktop install, own systemd scope and a tray icon | Accepted |
 | [0020](0020-model-router-on-usage-limits.md) | Model router: fall back to the closest model on usage limits | Accepted |
 | [0021](0021-colour-themes.md) | Colour themes | Accepted |
+| [0022](0022-start-up-animation.md) | Start-up animation | Accepted |

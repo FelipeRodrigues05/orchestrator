@@ -230,7 +230,10 @@ fn long_log_lines_wrap_under_their_text() {
 #[test]
 fn empty_room_shows_the_guide() {
     let mut room = Room::new();
-    room.set_state(AppState::default());
+    room.set_state(AppState {
+        skip_intro: true,
+        ..AppState::default()
+    });
     let screen = text(&room.compose(140, 44));
     assert!(screen.contains("GETTING STARTED") && screen.contains(":open ~/code/my-repo"));
 }
@@ -588,4 +591,50 @@ fn themes_are_chosen_by_name_in_either_language() {
     state.theme = "nord".into();
     room.set_state(state);
     assert_eq!(room.theme(), crate::ui::theme::Theme::Nord);
+}
+
+#[test]
+fn the_intro_plays_once_and_a_key_skips_it() {
+    let mut room = Room::new();
+    room.set_state(AppState::default());
+    assert!(!room.intro_done());
+    // Right after start the screen is still opening: the room is hidden.
+    let screen = text(&room.compose(140, 44));
+    assert!(!screen.contains("GETTING STARTED"), "{screen}");
+    // A key only skips; it does not reach the room (no palette opens).
+    room.key(Key::Char(':'));
+    assert!(room.intro_done() && room.palette.is_none());
+    assert!(text(&room.compose(140, 44)).contains("GETTING STARTED"));
+    // Turned off: it never plays.
+    let mut room = Room::new();
+    room.set_state(AppState {
+        skip_intro: true,
+        ..AppState::default()
+    });
+    assert!(room.intro_done());
+}
+
+#[test]
+fn the_intro_checks_what_the_runtime_found_then_wakes_the_pet() {
+    let mut state = sample_state();
+    state.skip_intro = false;
+    state.sandbox = true;
+    let mut room = Room::new();
+    room.set_state(state);
+    room.boot = Some(super::boot::Boot::at(1_600));
+    let screen = text(&room.compose(120, 40));
+    if std::env::var_os("SHOW").is_some() {
+        eprintln!("{screen}");
+    }
+    assert!(screen.contains("SYSTEM CHECK"), "{screen}");
+    assert!(
+        screen.contains("sandbox (bubblewrap)") && screen.contains("OK"),
+        "{screen}"
+    );
+    room.boot = Some(super::boot::Boot::at(2_100));
+    let screen = text(&room.compose(120, 40));
+    if std::env::var_os("SHOW").is_some() {
+        eprintln!("{screen}");
+    }
+    assert!(screen.contains("is awake"), "{screen}");
 }

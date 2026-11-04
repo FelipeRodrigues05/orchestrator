@@ -46,6 +46,11 @@ impl Room {
             }
             "persona" => self.persona_command(rest),
             "color" | "colour" | "cor" => self.color_command(rest),
+            "intro" => match rest {
+                "on" => self.outbox.push(Command::SetIntro(true)),
+                "off" => self.outbox.push(Command::SetIntro(false)),
+                _ => self.say("usage: :intro on|off", WARN),
+            },
             "theme" | "tema" => {
                 if let Some(theme) = Theme::parse(rest) {
                     self.outbox.push(Command::SetTheme(theme.name().to_owned()));

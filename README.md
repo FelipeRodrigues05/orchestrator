@@ -221,6 +221,7 @@ only write inside their worktree.
 | `:update` | Update the agent CLIs |
 | `:email <url>` | Your webmail, for the pet's "open my email" |
 | `:theme <name>` | Colours: `mono`, `amber`, `green`, `nord`, `light` |
+| `:intro on` / `off` | The start-up animation (any key skips it) |
 
 `?` shows every key and command; `:` opens the palette, which finds any action by
 typing part of its name.

@@ -92,6 +92,8 @@ pub fn sample_state() -> AppState {
 
     AppState {
         focus: Some(project.id),
+        // Tests and screenshots want the room, not the intro.
+        skip_intro: true,
         projects: vec![project],
         groups: vec![api, front],
         agents: vec![backend, tests, checkout],

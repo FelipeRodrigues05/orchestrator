@@ -84,6 +84,7 @@ pub fn build_window(
         screen.add_controller(controller);
     }
     start_ticking(&room, &screen, &flush);
+    animate_intro(&room, &screen);
 
     // The wake word listens for this pet's name.
     room.borrow_mut().send_pet_name();
@@ -301,6 +302,23 @@ fn wheel_controllers(
         }
     });
     [motion.upcast(), wheel.upcast()]
+}
+
+/// The intro moves faster than the room's tick: redraw often until it is over.
+fn animate_intro(room: &Shared<Room>, screen: &gtk::DrawingArea) {
+    let room = room.clone();
+    let screen = screen.downgrade();
+    glib::timeout_add_local(std::time::Duration::from_millis(40), move || {
+        let Some(screen) = screen.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        screen.queue_draw();
+        if room.borrow().intro_done() {
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
 }
 
 /// Animations, pings and blinking run on the room's tick.
