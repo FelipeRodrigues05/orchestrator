@@ -62,6 +62,7 @@ impl Orchestrator {
             Command::Select(agent) => self.select(agent),
             Command::OpenIn { agent, editor } => self.open_in(agent, editor).await,
             Command::SetApiKey { service, key } => self.set_api_key(service, key),
+            Command::DeleteApiKey(service) => self.delete_api_key(service),
             Command::SetProvider { agent, provider } => self.set_provider(agent, &provider),
             Command::SetGroupLimit { group, limit } => self.set_group_limit(&group, limit),
             Command::OpenEmail => self.open_email().await,

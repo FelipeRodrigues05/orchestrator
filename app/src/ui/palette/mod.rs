@@ -62,6 +62,8 @@ enum Mode {
     Model(Uuid),
     /// Pick the colour an agent's lines are painted in.
     Color(Uuid),
+    /// Pick a service whose stored API key goes away.
+    DeleteKey,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -132,6 +134,8 @@ enum Pick {
     /// A placeholder while something is on its way.
     Waiting,
     ChooseColor(Uuid),
+    DeleteKeys,
+    DeleteKey(String),
     /// `None`: picked from the agent's id; `Some("none")`: plain text.
     Color(Option<String>),
 }
@@ -199,6 +203,11 @@ impl Palette {
     fn to(&mut self, mode: Mode) {
         self.mode = mode;
         self.query.clear();
+        self.cursor = 0;
+    }
+
+    pub fn type_str(&mut self, text: &str) {
+        self.query.push_str(text);
         self.cursor = 0;
     }
 

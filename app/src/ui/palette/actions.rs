@@ -86,6 +86,11 @@ impl Palette {
                 Outcome::Send(Command::ProbeModels(agent))
             }
             Pick::Waiting => Outcome::Keep,
+            Pick::DeleteKeys => {
+                self.to(Mode::DeleteKey);
+                Outcome::Keep
+            }
+            Pick::DeleteKey(service) => Outcome::Done(Command::DeleteApiKey(service)),
             Pick::ChooseColor(agent) => {
                 self.to(Mode::Color(agent));
                 Outcome::Keep

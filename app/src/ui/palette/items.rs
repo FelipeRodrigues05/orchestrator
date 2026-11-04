@@ -26,6 +26,26 @@ impl Palette {
             Mode::SwitchProvider(_) => self.provider_items(state),
             Mode::Model(agent) => self.model_items(state, *agent),
             Mode::Color(agent) => color_items(state, *agent),
+            Mode::DeleteKey => {
+                let stored: Vec<Item> = state
+                    .providers
+                    .iter()
+                    .filter(|p| p.ready && matches!(p.provider, Provider::Api { .. }))
+                    .map(|p| {
+                        item(
+                            p.label.clone(),
+                            "key stored",
+                            "",
+                            Pick::DeleteKey(p.label.clone()),
+                        )
+                    })
+                    .collect();
+                if stored.is_empty() {
+                    vec![item("no API key stored", "", "", Pick::Waiting)]
+                } else {
+                    stored
+                }
+            }
             Mode::Voice => self.voice_items(state),
             Mode::PetModel => self.pet_model_items(state),
             Mode::ApiKey => state
@@ -109,6 +129,12 @@ impl Palette {
         ));
         items.extend(project_items(state));
         items.push(item("Set API key", "Secret Service", "", Pick::ApiKey));
+        items.push(item(
+            "Delete API key",
+            "remove a stored key",
+            "",
+            Pick::DeleteKeys,
+        ));
         items.push(item(
             "Update agent CLIs",
             "opencode, claude, codex, gemini…",

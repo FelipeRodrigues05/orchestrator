@@ -239,3 +239,24 @@ fn color_of_an_agent_is_picked_from_the_palette() {
         })
     );
 }
+
+#[test]
+fn delete_api_key_lists_the_stored_ones() {
+    let mut state = sample_state();
+    state.providers.push(orch_core::model::ProviderOption {
+        label: "anthropic".into(),
+        provider: Provider::Api {
+            service: "anthropic".into(),
+            model: "m".into(),
+            key_ref: "k".into(),
+        },
+        ready: true,
+    });
+    let mut palette = Palette::commands();
+    typed(&mut palette, "delete api key");
+    palette.enter(&state, None);
+    assert_eq!(
+        palette.enter(&state, None),
+        Outcome::Done(Command::DeleteApiKey("anthropic".into()))
+    );
+}

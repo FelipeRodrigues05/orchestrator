@@ -171,6 +171,10 @@ fn key_controller(
         let screen = screen.clone();
         let flush = flush.clone();
         move |_, key, _, modifiers| {
+            if is_paste(key, modifiers) {
+                paste(&room, &screen, &flush);
+                return glib::Propagation::Stop;
+            }
             {
                 let mut room = room.borrow_mut();
                 if key == gdk::Key::space && modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
@@ -202,6 +206,30 @@ fn key_controller(
         }
     });
     keys
+}
+
+/// Ctrl+V, Ctrl+Shift+V or Shift+Insert.
+fn is_paste(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
+    let ctrl = modifiers.contains(gdk::ModifierType::CONTROL_MASK);
+    let shift = modifiers.contains(gdk::ModifierType::SHIFT_MASK);
+    matches!(key, gdk::Key::v | gdk::Key::V) && ctrl || key == gdk::Key::Insert && shift
+}
+
+/// The clipboard's text goes where the operator is typing.
+fn paste(room: &Shared<Room>, screen: &gtk::DrawingArea, flush: &Flush) {
+    let clipboard = screen.clipboard();
+    let (room, screen, flush) = (room.clone(), screen.clone(), flush.clone());
+    glib::spawn_future_local(async move {
+        match clipboard.read_text_future().await {
+            Ok(Some(text)) => {
+                room.borrow_mut().paste(&text);
+                flush();
+                screen.queue_draw();
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!(%error, "could not read the clipboard"),
+        }
+    });
 }
 
 /// Clicks land on the grid cell under the pointer.

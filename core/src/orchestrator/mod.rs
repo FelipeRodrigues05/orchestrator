@@ -73,6 +73,8 @@ pub enum Command {
     SetFallback(String),
     /// Context fill (percent) at which agents go on with a summary; `None`: never.
     SetCompactAt(Option<u64>),
+    /// Removes a service's API key from the Secret Service.
+    DeleteApiKey(String),
     /// Asks the agent's provider which models it offers (the list then shows up in
     /// `Agent::models`), also while the agent is stopped.
     ProbeModels(Uuid),

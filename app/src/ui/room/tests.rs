@@ -534,3 +534,42 @@ fn the_log_tells_the_operator_from_the_agent() {
     assert!(row("stopping now").contains(&agent.name), "{screen}");
     assert!(!row("stopping now").contains("you"), "{screen}");
 }
+
+#[test]
+fn pasted_api_keys_are_trimmed_and_masked() {
+    let mut room = room();
+    room.drain();
+    type_line(&mut room, ":key anthropic");
+    room.paste("  sk-ant-api03-secret\n");
+    let screen = text(&room.compose(140, 44));
+    assert!(!screen.contains("sk-ant"), "the key must stay masked");
+    room.key(Key::Enter);
+    assert_eq!(
+        room.drain(),
+        vec![Command::SetApiKey {
+            service: "anthropic".into(),
+            key: Secret("sk-ant-api03-secret".into())
+        }]
+    );
+    // In a message the text goes where the cursor is.
+    room.key(Key::Enter);
+    for ch in "look at ".chars() {
+        room.key(Key::Char(ch));
+    }
+    room.paste("src/main.rs");
+    room.key(Key::Enter);
+    assert!(
+        matches!(&room.drain()[..], [Command::Say { text, .. }] if text == "look at src/main.rs")
+    );
+}
+
+#[test]
+fn api_keys_can_be_deleted() {
+    let mut room = room();
+    room.drain();
+    type_line(&mut room, ":key Anthropic delete");
+    assert_eq!(
+        room.drain(),
+        vec![Command::DeleteApiKey("anthropic".into())]
+    );
+}

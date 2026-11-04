@@ -120,6 +120,14 @@ impl Room {
                 url => self.outbox.push(Command::SetEmailUrl(url.to_owned())),
             },
             "term" | "terminal" => self.outbox.push(Command::OpenTerminal(self.selected)),
+            "key" if rest.ends_with(" delete") || rest.ends_with(" remove") => {
+                let service = rest
+                    .rsplit_once(' ')
+                    .map_or(rest, |(service, _)| service)
+                    .trim();
+                self.outbox
+                    .push(Command::DeleteApiKey(service.to_lowercase()));
+            }
             "key" if !rest.is_empty() => {
                 self.prompt = Some(Prompt::Secret {
                     service: rest.to_lowercase(),

@@ -71,7 +71,10 @@ pub(super) fn draw_help(grid: &mut Grid) {
             ":edit [editor]",
             "open the agent's worktree · :edit project",
         ),
-        (":key <service>", "store an API key in the Secret Service"),
+        (
+            ":key <service> [delete]",
+            "store an API key in the Secret Service (paste with Ctrl+V) · or remove it",
+        ),
         (
             ":compact <n%|off>",
             "context fill at which agents go on with a summary (85%)",

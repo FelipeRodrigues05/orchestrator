@@ -30,6 +30,19 @@ impl Orchestrator {
         });
     }
 
+    pub(super) fn delete_api_key(&mut self, service: String) {
+        let inbox = self.inbox.clone();
+        tokio::spawn(async move {
+            let (text, level) = match secrets::delete(&service).await {
+                Ok(()) => (format!("{service} key removed from the Secret Service"), LogLevel::Info),
+                Err(error) => (format!("could not remove the {service} key: {error}"), LogLevel::Error),
+            };
+            let _ = inbox.send(Internal::Notice(text, level));
+            // An empty notice refreshes the providers: this one now needs a key.
+            let _ = inbox.send(Internal::Notice(String::new(), LogLevel::Info));
+        });
+    }
+
     pub(super) fn set_host_provider(&mut self, label: String) {
         let usable = self
             .find_provider(Some(&label))

@@ -89,6 +89,25 @@ impl Room {
         }
     }
 
+    /// Text from the clipboard, where the operator is typing: the palette, the API
+    /// key (trimmed: keys are often copied with a line break) or the message.
+    pub fn paste(&mut self, text: &str) {
+        if let Some(palette) = &mut self.palette {
+            palette.type_str(text.trim());
+            return;
+        }
+        match &mut self.prompt {
+            Some(Prompt::Secret { key, .. }) => key.push_str(text.trim()),
+            Some(Prompt::Text(editor)) => editor.insert_str(&text.replace("\r\n", "\n")),
+            // Nothing open: the pasted text starts a message.
+            None => {
+                let mut editor = Editor::default();
+                editor.insert_str(&text.replace("\r\n", "\n"));
+                self.prompt = Some(Prompt::Text(editor));
+            }
+        }
+    }
+
     /// A key while the command line is open: edit the message, or type the API key.
     fn prompt_key(&mut self, key: Key) {
         let width = self.editor_width;
