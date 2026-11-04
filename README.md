@@ -220,6 +220,7 @@ only write inside their worktree.
 | `:wake on` / `off` | Call the pet by name instead of holding Ctrl+Space |
 | `:update` | Update the agent CLIs |
 | `:email <url>` | Your webmail, for the pet's "open my email" |
+| `:theme <name>` | Colours: `mono`, `amber`, `green`, `nord`, `light` |
 
 `?` shows every key and command; `:` opens the palette, which finds any action by
 typing part of its name.

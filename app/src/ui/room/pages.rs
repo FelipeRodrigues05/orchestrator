@@ -7,7 +7,7 @@ use super::{ACCENT, DIM, FAINT, OK, TEXT, TITLE, WARN, s, title};
 use crate::ui::grid::{Grid, Lines, Rect, Style, Weight, fit};
 
 pub(super) fn draw_help(grid: &mut Grid) {
-    let lines: [(&str, &str); 46] = [
+    let lines: [(&str, &str); 47] = [
         (
             "Enter / i",
             "message the selected agent (or \"agente X: …\")",
@@ -61,6 +61,7 @@ pub(super) fn draw_help(grid: &mut Grid) {
             ":color [agent] <color>",
             "its lines and name in a colour · auto · none",
         ),
+        (":theme <name>", "mono · amber · green · nord · light"),
         (
             ":persona [agent]: <who>",
             "who the agent is; agents ask teammates with ask_agent",
