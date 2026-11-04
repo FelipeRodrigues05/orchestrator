@@ -89,6 +89,10 @@ impl AgentRunner for McpCliRunner {
         let (program, extra) = words.split_first().ok_or("empty command")?;
         let mut args = extra.to_vec();
         args.extend(claude_args(&url));
+        // The group's other projects (ADR 0024).
+        for folder in &self.context.extra_dirs {
+            args.extend(["--add-dir".to_owned(), folder.to_string_lossy().into_owned()]);
+        }
         if let Some(model) = &agent.model {
             args.extend(["--model".to_owned(), model.clone()]);
         }
@@ -97,7 +101,7 @@ impl AgentRunner for McpCliRunner {
         let available = CLAUDE_MODELS.iter().map(|m| (*m).to_owned()).collect();
         let _ = self.events_tx.send(AgentEvent::Models { current, available }).await;
         let (program, args) = if self.context.sandbox && crate::sandbox::available() {
-            crate::sandbox::wrap(program, &args, &agent.worktree)
+            crate::sandbox::wrap(program, &args, &agent.worktree, &self.context.extra_dirs)
         } else {
             (program.clone(), args)
         };
@@ -336,6 +340,7 @@ mod smoke {
             sandbox: crate::sandbox::available(),
             mcp: Some(mcp::spawn().await.unwrap()),
             team: None,
+            extra_dirs: Vec::new(),
         };
         let agent = Agent {
             id: Uuid::new_v4(),

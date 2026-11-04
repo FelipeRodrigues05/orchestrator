@@ -21,6 +21,8 @@ impl Orchestrator {
                 self.ensure_project().await;
                 self.create_group(&name, &goal);
             }
+            Command::AttachProject { group, root } => self.attach_project(&group, root).await,
+            Command::DetachProject { group, project } => self.detach_project(&group, &project),
             Command::CreateAgent { group, name, provider, task, persona } => {
                 self.ensure_project().await;
                 self.ensure_workspace_group(&group);
@@ -236,8 +238,29 @@ impl Orchestrator {
         self.log(Some(id), LogLevel::Info, "merging into the project…");
         let inbox = self.inbox.clone();
         let message = format!("{}: {}", agent.name, agent.task);
+        let attached = self.attached_places(&agent);
         tokio::spawn(async move {
-            let result = worktree::merge(&project.root, &agent.worktree, &message).await;
+            let main = worktree::merge(&project.root, &agent.worktree, &message).await;
+            let mut failed = main.is_err();
+            let mut lines = vec![match &main {
+                Ok(text) | Err(text) => format!("{}: {text}", project.name),
+            }];
+            // Then each of the group's other projects that has a worktree (ADR 0024).
+            for (root, place) in attached.iter().filter(|(root, place)| root != place) {
+                let name = root.file_name().map_or_else(|| root.display().to_string(), |n| n.to_string_lossy().into());
+                let merged = worktree::merge(root, place, &message).await;
+                failed |= merged.is_err();
+                lines.push(match merged {
+                    Ok(text) | Err(text) => format!("{name}: {text}"),
+                });
+            }
+            let result = if lines.len() == 1 {
+                main
+            } else if failed {
+                Err(lines.join(" · "))
+            } else {
+                Ok(lines.join(" · "))
+            };
             let _ = inbox.send(Internal::Merged { agent: id, result });
         });
     }

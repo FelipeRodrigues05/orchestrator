@@ -58,6 +58,8 @@ pub struct AskContext {
     pub agent_name: String,
     pub group_name: String,
     pub worktree: PathBuf,
+    /// The agent's places in the group's other projects (ADR 0024): inside, too.
+    pub extra: Vec<PathBuf>,
     /// Files the tool touches, absolute or relative to the worktree.
     pub paths: Vec<PathBuf>,
 }
@@ -223,8 +225,8 @@ impl Broker {
     fn ask(&mut self, mut request: PermissionRequest, context: &AskContext, reply: oneshot::Sender<Decision>) {
         request.timeout_secs = self.timeout.as_secs() as i64;
         // Commands writing outside the worktree always reach the operator (ADR 0006).
-        let risky =
-            request.tool.eq_ignore_ascii_case("bash") && writes_outside(&request.input_summary(), &context.worktree);
+        let risky = request.tool.eq_ignore_ascii_case("bash")
+            && writes_outside(&request.input_summary(), &context.worktree, &context.extra);
         if risky {
             request.warning = Some("writes outside the agent's worktree".into());
         }
@@ -303,7 +305,7 @@ fn safe_default(tool: &str, context: &AskContext) -> Option<(Decision, DecisionS
     if crate::team::is_team_tool(tool) {
         return Some((Decision::Allow, DecisionSource::Default));
     }
-    let outside = context.paths.iter().any(|path| !inside(&context.worktree, path));
+    let outside = context.paths.iter().any(|path| !inside(&context.worktree, &context.extra, path));
     let tool = tool.to_ascii_lowercase();
     let reads = matches!(tool.as_str(), "read" | "search" | "think");
     let writes = matches!(tool.as_str(), "edit" | "write" | "delete" | "move");
@@ -314,9 +316,9 @@ fn safe_default(tool: &str, context: &AskContext) -> Option<(Decision, DecisionS
     reads.then_some((Decision::Allow, DecisionSource::Default))
 }
 
-/// Whether a shell command looks like it writes to a path outside `worktree`. A
-/// heuristic until the sandbox (step 9) enforces it.
-pub fn writes_outside(command: &str, worktree: &Path) -> bool {
+/// Whether a shell command looks like it writes to a path outside `worktree` (and
+/// the `extra` folders). A heuristic until the sandbox (step 9) enforces it.
+pub fn writes_outside(command: &str, worktree: &Path, extra: &[PathBuf]) -> bool {
     static WRITES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(
             r"(^|[;&|(]\s*|\s)(rm|rmdir|mv|cp|tee|touch|mkdir|chmod|chown|ln|dd|install|truncate|rsync)\b|\bsed\s+-[a-zA-Z]*i|>",
@@ -337,12 +339,14 @@ pub fn writes_outside(command: &str, worktree: &Path) -> bool {
                 Some(rest) => home.join(rest.trim_start_matches('/')),
                 None => std::path::PathBuf::from(token),
             };
-            !inside(worktree, &path)
+            !inside(worktree, extra, &path)
         })
 }
 
-fn inside(worktree: &Path, path: &Path) -> bool {
-    resolve(worktree, path).starts_with(resolve(worktree, Path::new(".")))
+/// Whether `path` (relative to the worktree) lies in the worktree or an extra folder.
+fn inside(worktree: &Path, extra: &[PathBuf], path: &Path) -> bool {
+    let full = resolve(worktree, path);
+    full.starts_with(resolve(worktree, Path::new("."))) || extra.iter().any(|folder| full.starts_with(folder))
 }
 
 #[cfg(test)]
@@ -384,6 +388,7 @@ mod tests {
             agent_name: "Tests".into(),
             group_name: "API".into(),
             worktree: "/tmp/shop/.worktrees/tests".into(),
+            extra: Vec::new(),
             paths: Vec::new(),
         }
     }
@@ -496,13 +501,17 @@ mod tests {
     #[test]
     fn spots_shell_writes_outside_the_worktree() {
         let worktree = Path::new("/tmp/shop/.worktrees/tests");
-        assert!(writes_outside("rm -rf /home/me/project", worktree));
-        assert!(writes_outside("echo hi > ../../outside.txt", worktree));
-        assert!(writes_outside("cp a.txt ~/notes.txt", worktree));
-        assert!(!writes_outside("rm -rf target", worktree));
-        assert!(!writes_outside("cat /etc/hosts", worktree));
-        assert!(!writes_outside("cargo test 2>/dev/null", worktree));
-        assert!(!writes_outside("echo ok > /tmp/shop/.worktrees/tests/out.txt", worktree));
+        assert!(writes_outside("rm -rf /home/me/project", worktree, &[]));
+        assert!(writes_outside("echo hi > ../../outside.txt", worktree, &[]));
+        assert!(writes_outside("cp a.txt ~/notes.txt", worktree, &[]));
+        assert!(!writes_outside("rm -rf target", worktree, &[]));
+        assert!(!writes_outside("cat /etc/hosts", worktree, &[]));
+        assert!(!writes_outside("cargo test 2>/dev/null", worktree, &[]));
+        assert!(!writes_outside("echo ok > /tmp/shop/.worktrees/tests/out.txt", worktree, &[]));
+        // The group's other projects count as inside (ADR 0024).
+        let extra = [PathBuf::from("/tmp/site/.worktrees/tests")];
+        assert!(!writes_outside("echo ok > /tmp/site/.worktrees/tests/a.txt", worktree, &extra));
+        assert!(writes_outside("echo ok > /tmp/site/a.txt", worktree, &extra));
     }
 
     #[tokio::test]

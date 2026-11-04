@@ -61,6 +61,16 @@ pub enum Command {
         name: String,
         goal: String,
     },
+    /// The group spans another project folder too (ADR 0024).
+    AttachProject {
+        group: String,
+        root: PathBuf,
+    },
+    /// The group leaves an attached project (by folder name).
+    DetachProject {
+        group: String,
+        project: String,
+    },
     CreateAgent {
         group: String,
         name: String,

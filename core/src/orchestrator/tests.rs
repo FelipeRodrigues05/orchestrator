@@ -470,3 +470,33 @@ async fn a_global_agent_brings_its_memory_rules_and_persona_to_another_project()
     let state = room.until(|s| s.profiles.is_empty()).await;
     assert_eq!(state.agents.iter().filter(|a| a.profile_id == Some(profile.id)).count(), 2);
 }
+
+#[tokio::test]
+async fn a_group_spans_other_projects_with_a_worktree_in_each() {
+    let room = room();
+    let state = room.staffed().await;
+    let tests = state.agents.iter().find(|a| a.name == "Tests").unwrap().id;
+    let site = git_repo();
+    room.send(Command::AttachProject { group: "api".into(), root: site.path().into() }).await;
+    let state = room.until(|s| s.groups.iter().any(|g| !g.attached.is_empty())).await;
+    let root = state.groups[0].attached[0].clone();
+    // Twice is once.
+    room.send(Command::AttachProject { group: "api".into(), root: site.path().into() }).await;
+    room.until(|s| s.log.iter().any(|e| e.text.contains("already works in"))).await;
+
+    room.send(Command::Message { agent: tests, text: "go".into() }).await;
+    let state = room.until(|s| agent_lines(s, tests).iter().any(|l| l.starts_with("echo:"))).await;
+    let briefing = agent_lines(&state, tests).join("\n");
+    assert!(briefing.contains("The group spans other projects too"), "{briefing}");
+    let place = crate::worktree::path_for(&root, "Tests", tests);
+    assert!(briefing.contains(&place.display().to_string()), "{briefing}");
+    assert!(place.join(".git").exists(), "no worktree in the attached project");
+
+    // Merging goes through every project.
+    room.send(Command::Merge(tests)).await;
+    let name = root.file_name().unwrap().to_string_lossy().into_owned();
+    room.until(|s| s.log.iter().any(|e| e.text.contains(&format!("{name}: ")) && e.text.contains(" · "))).await;
+
+    room.send(Command::DetachProject { group: "api".into(), project: name }).await;
+    room.until(|s| s.groups[0].attached.is_empty()).await;
+}

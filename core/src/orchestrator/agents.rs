@@ -100,6 +100,7 @@ impl Orchestrator {
         } else {
             agent
         };
+        let attached = self.attached_places(&agent);
         let context = RunnerContext {
             broker: self.broker.clone(),
             group_id: group.id,
@@ -107,6 +108,7 @@ impl Orchestrator {
             sandbox: self.state.sandbox,
             mcp: self.mcp.clone(),
             team: Some(self.team.clone()),
+            extra_dirs: attached.iter().map(|(_, place)| place.clone()).collect(),
         };
         let runner = match (self.runners)(&agent.provider, context) {
             Ok(runner) => runner,
@@ -121,7 +123,7 @@ impl Orchestrator {
         self.turns.entry(id).or_default().sent += 1;
         self.running.insert(id, tx);
         self.log(Some(id), LogLevel::Info, &format!("starting with {}", agent.provider.short_name()));
-        tokio::spawn(agent_actor(runner, agent, project.root, rx, self.inbox.clone()));
+        tokio::spawn(agent_actor(runner, agent, project.root, attached, rx, self.inbox.clone()));
     }
 
     /// Starts the agent with `prompt`, stopping its current run first if needed.
@@ -553,19 +555,26 @@ impl Orchestrator {
     }
 }
 
-/// One task per started agent: creates its worktree, owns its runner, forwards
-/// its events to the orchestrator.
+/// One task per started agent: creates its worktrees (in the project and in the
+/// group's other projects), owns its runner, forwards its events to the orchestrator.
 async fn agent_actor(
     mut runner: Box<dyn AgentRunner>,
     agent: Agent,
     root: PathBuf,
+    attached: Vec<(PathBuf, PathBuf)>,
     mut commands: mpsc::UnboundedReceiver<AgentCmd>,
     inbox: mpsc::UnboundedSender<Internal>,
 ) {
     let id = agent.id;
     let span = tracing::info_span!("agent", agent_id = %id, name = %agent.name);
     let _enter = span.enter();
-    let started = match worktree::ensure(&root, &agent.worktree).await {
+    let mut ready = worktree::ensure(&root, &agent.worktree).await;
+    for (root, place) in &attached {
+        if ready.is_ok() {
+            ready = worktree::ensure(root, place).await.map_err(|e| format!("{}: {e}", root.display()));
+        }
+    }
+    let started = match ready {
         Ok(()) => runner.start(&agent, "").await,
         Err(error) => Err(error),
     };

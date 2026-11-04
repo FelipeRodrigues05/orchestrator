@@ -44,9 +44,9 @@ pub fn git_common_dir(worktree: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(common))
 }
 
-/// `program args…` run inside bubblewrap with `worktree` as the only project
-/// folder it can write.
-pub fn wrap(program: &str, args: &[String], worktree: &Path) -> (String, Vec<String>) {
+/// `program args…` run inside bubblewrap with `worktree` (and the `extra` folders
+/// in the group's other projects, ADR 0024) as the only project folders it can write.
+pub fn wrap(program: &str, args: &[String], worktree: &Path, extra: &[PathBuf]) -> (String, Vec<String>) {
     let mut out: Vec<String> =
         ["--die-with-parent", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
             .iter()
@@ -66,6 +66,12 @@ pub fn wrap(program: &str, args: &[String], worktree: &Path) -> (String, Vec<Str
         for path in std::env::split_paths(&extra) {
             bind(&path);
         }
+    }
+    for folder in extra {
+        if let Some(git) = git_common_dir(folder) {
+            bind(&git);
+        }
+        bind(folder);
     }
     if let Some(git) = git_common_dir(worktree) {
         bind(&git);
@@ -96,7 +102,7 @@ mod tests {
         let worktree = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir_in(std::env::var("HOME").unwrap()).unwrap();
         let script = format!("touch inside.txt; touch {}/escaped.txt 2>/dev/null; true", outside.path().display());
-        let (program, args) = wrap("sh", &["-c".into(), script], worktree.path());
+        let (program, args) = wrap("sh", &["-c".into(), script], worktree.path(), &[]);
         let status = std::process::Command::new(program).args(args).status().unwrap();
         assert!(status.success());
         assert!(worktree.path().join("inside.txt").exists());

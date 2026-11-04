@@ -63,7 +63,7 @@ impl AgentRunner for AcpRunner {
         let words = shell_words::split(&command).map_err(|e| e.to_string())?;
         let (program, args) = words.split_first().ok_or("empty command")?;
         let (program, args) = if self.context.sandbox && crate::sandbox::available() {
-            crate::sandbox::wrap(program, args, &agent.worktree)
+            crate::sandbox::wrap(program, args, &agent.worktree, &self.context.extra_dirs)
         } else {
             (program.clone(), args.to_vec())
         };
@@ -164,6 +164,7 @@ where
     let titles = Arc::new(Mutex::new(HashMap::<String, String>::new()));
     let updates = events.clone();
     let worktree = info.worktree.clone();
+    let extra_dirs = context.extra_dirs.clone();
     let wanted_model = info.model.clone();
     Client
         .builder()
@@ -193,6 +194,14 @@ where
         .connect_with(transport, async move |cx: ConnectionTo<AcpAgent>| {
             let init = cx.send_request(InitializeRequest::new(ProtocolVersion::V1)).block_task().await?;
             let mut session = NewSessionRequest::new(worktree);
+            // The group's other projects (ADR 0024), for CLIs that take more roots.
+            if !extra_dirs.is_empty() {
+                if init.agent_capabilities.session_capabilities.additional_directories.is_some() {
+                    session = session.additional_directories(extra_dirs);
+                } else {
+                    tracing::info!("the agent takes no additional directories: its briefing lists them");
+                }
+            }
             match team_url {
                 Some(url) if init.agent_capabilities.mcp_capabilities.http => {
                     session = session.mcp_servers(vec![McpServer::Http(McpServerHttp::new(crate::mcp::SERVER, url))]);
@@ -479,6 +488,7 @@ mod tests {
             sandbox: crate::sandbox::available(),
             mcp: None,
             team: None,
+            extra_dirs: Vec::new(),
         };
         let agent = Agent {
             id: uuid::Uuid::new_v4(),
@@ -533,6 +543,7 @@ mod tests {
             sandbox: crate::sandbox::available(),
             mcp: None,
             team: None,
+            extra_dirs: Vec::new(),
         };
         let agent = Agent {
             id: uuid::Uuid::new_v4(),
@@ -607,6 +618,7 @@ mod tests {
             sandbox: crate::sandbox::available(),
             mcp: Some(crate::mcp::spawn().await.unwrap()),
             team: Some(crate::team::TeamHandle::new(team_tx)),
+            extra_dirs: Vec::new(),
         };
         let agent = Agent {
             id: uuid::Uuid::new_v4(),
@@ -670,6 +682,7 @@ mod tests {
             sandbox: crate::sandbox::available(),
             mcp: None,
             team: None,
+            extra_dirs: Vec::new(),
         };
         let agent = Agent {
             id: uuid::Uuid::new_v4(),

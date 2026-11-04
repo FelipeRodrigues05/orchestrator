@@ -161,6 +161,7 @@ impl Orchestrator {
             goal: goal.trim().to_owned(),
             rules: Vec::new(),
             max_active: None,
+            attached: Vec::new(),
         };
         if let Some(store) = &self.store {
             store.save_group(&group);
@@ -266,5 +267,72 @@ impl Orchestrator {
         self.selected = Some(id);
         self.notice(LogLevel::Info, text);
         Some(id)
+    }
+
+    /// The agent's places in its group's other projects: `(project root, where it
+    /// works)`, a worktree in a git repository or the folder itself (ADR 0024).
+    pub(super) fn attached_places(&self, agent: &Agent) -> Vec<(PathBuf, PathBuf)> {
+        let Some(group) = self.state.group(agent.group_id) else { return Vec::new() };
+        group.attached.iter().map(|root| (root.clone(), worktree::place_for(root, &agent.name, agent.id))).collect()
+    }
+
+    /// The group spans `root` too: its agents get a place there from their next start.
+    pub(super) async fn attach_project(&mut self, group: &str, root: PathBuf) {
+        let root = match tokio::fs::canonicalize(&root).await {
+            Ok(root) if root.is_dir() => root,
+            _ => {
+                self.notice(LogLevel::Error, format!("{} is not a folder", root.display()));
+                return;
+            }
+        };
+        let Some(id) = self.find_group(group).map(|g| g.id) else {
+            self.notice(LogLevel::Warn, format!("no group named {group}"));
+            return;
+        };
+        let home = self.state.project_of_group(id).map(|p| p.root.clone());
+        let Some(target) = self.state.groups.iter_mut().find(|g| g.id == id) else { return };
+        if home.as_ref() == Some(&root) || target.attached.contains(&root) {
+            let text = format!("{} already works in {}", target.name, root.display());
+            self.notice(LogLevel::Info, text);
+            return;
+        }
+        target.attached.push(root.clone());
+        let snapshot = target.clone();
+        if let Some(store) = &self.store {
+            store.save_group(&snapshot);
+        }
+        let how = if worktree::is_repository(&root).await {
+            "each agent gets its own worktree there"
+        } else {
+            "no git there: agents share the folder"
+        };
+        self.notice(
+            LogLevel::Info,
+            format!("{} now spans {} ({how}; running agents see it after a restart)", snapshot.name, root.display()),
+        );
+    }
+
+    /// The group leaves an attached project; worktrees made there stay on disk.
+    pub(super) fn detach_project(&mut self, group: &str, project: &str) {
+        let Some(id) = self.find_group(group).map(|g| g.id) else {
+            self.notice(LogLevel::Warn, format!("no group named {group}"));
+            return;
+        };
+        let wanted = normalize(project);
+        let Some(target) = self.state.groups.iter_mut().find(|g| g.id == id) else { return };
+        let named = |root: &PathBuf| {
+            root.file_name().is_some_and(|n| normalize(&n.to_string_lossy()) == wanted) || root.as_os_str() == project
+        };
+        let Some(index) = target.attached.iter().position(named) else {
+            let text = format!("{} does not span a project named {project}", target.name);
+            self.notice(LogLevel::Warn, text);
+            return;
+        };
+        let root = target.attached.remove(index);
+        let snapshot = target.clone();
+        if let Some(store) = &self.store {
+            store.save_group(&snapshot);
+        }
+        self.notice(LogLevel::Info, format!("{} no longer spans {}", snapshot.name, root.display()));
     }
 }

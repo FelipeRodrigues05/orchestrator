@@ -294,13 +294,25 @@ impl Room {
         boxes.draw(grid, FRAME);
         // Group names sit on the top border of their block, like `┌─API────┐`.
         for (y, name) in labels {
-            let used = grid.text(
+            let mut used = grid.text(
                 x + 2,
                 y,
                 BLOCK_WIDTH - 4,
                 &format!(" {} ", name.to_uppercase()),
                 ACCENT.bold(),
             );
+            // A group spanning other projects (ADR 0024): "API +1".
+            if let Some(group) = state.groups.iter().find(|g| &g.name == name)
+                && !group.attached.is_empty()
+            {
+                used += grid.text(
+                    x + 2 + used,
+                    y,
+                    BLOCK_WIDTH.saturating_sub(4 + used),
+                    &format!("+{} ", group.attached.len()),
+                    DIM,
+                );
+            }
             // Busy slots when the group has a limit: "API 1/2".
             if let Some(group) = state.groups.iter().find(|g| &g.name == name)
                 && let Some(max) = group.max_active

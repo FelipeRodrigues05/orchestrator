@@ -253,6 +253,7 @@ fn open_projects_sit_left_of_the_sector_map() {
         goal: "shop".into(),
         rules: Vec::new(),
         max_active: None,
+        attached: Vec::new(),
     };
     let mut agent = state.agents[0].clone();
     agent.id = Uuid::new_v4();

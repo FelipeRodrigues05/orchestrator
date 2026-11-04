@@ -203,6 +203,9 @@ only write inside their worktree.
   persona, model and permissions, and its **memory**: notes it writes with its
   `remember` tool, or you with `:remember Back: prices are in cents`. `:forget
   <name>` takes it out of the library.
+- `:attach API: ~/code/site` makes the group span another project: each of its
+  agents gets a worktree there too and can work in both. `:merge` merges each
+  project; `:detach API: site` undoes it.
 - `:lead API 3` asks the pet to split the group's goal into three agents.
 
 ### 8. Finish the work

@@ -134,7 +134,7 @@ async fn run_turn(
                 (format!("permission denied: {reason}"), true)
             } else {
                 let _ = events.send(AgentEvent::Tool { title: title.clone(), status: ToolStatus::Started }).await;
-                match tools::run(&call, &info.worktree, context.sandbox).await {
+                match tools::run(&call, &info.worktree, &context.extra_dirs, context.sandbox).await {
                     Ok(output) => (output, false),
                     Err(error) => (error, true),
                 }
@@ -185,6 +185,7 @@ mod smoke {
             sandbox: crate::sandbox::available(),
             mcp: None,
             team: None,
+            extra_dirs: Vec::new(),
         };
         let agent = Agent {
             id: uuid::Uuid::new_v4(),

@@ -178,6 +178,7 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
     let _ = connection.execute("ALTER TABLE agents ADD COLUMN model TEXT", []);
     let _ = connection.execute("ALTER TABLE agents ADD COLUMN color TEXT", []);
     let _ = connection.execute("ALTER TABLE agents ADD COLUMN profile_id TEXT", []);
+    let _ = connection.execute("ALTER TABLE groups ADD COLUMN attached TEXT NOT NULL DEFAULT '[]'", []);
     Ok(())
 }
 
@@ -218,17 +219,18 @@ fn apply(db: &Connection, op: Op) -> rusqlite::Result<()> {
         }
         Op::SaveGroup(g) => {
             db.execute(
-                "INSERT INTO groups (id, project_id, name, goal, rules, position, max_active)
-                 VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COUNT(*) FROM groups), ?6)
+                "INSERT INTO groups (id, project_id, name, goal, rules, position, max_active, attached)
+                 VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COUNT(*) FROM groups), ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET name = excluded.name, goal = excluded.goal,
-                     rules = excluded.rules, max_active = excluded.max_active",
+                     rules = excluded.rules, max_active = excluded.max_active, attached = excluded.attached",
                 params![
                     g.id.to_string(),
                     g.project_id.to_string(),
                     g.name,
                     g.goal,
                     json(&g.rules),
-                    g.max_active.map(|n| n as i64)
+                    g.max_active.map(|n| n as i64),
+                    json(&g.attached)
                 ],
             )?;
         }
@@ -361,7 +363,7 @@ fn load(db: &Connection, root: &Path) -> rusqlite::Result<Option<LoadedProject>>
     };
 
     let mut statement = db.prepare(
-        "SELECT id, name, goal, rules, max_active FROM groups WHERE project_id = ?1 ORDER BY position, rowid",
+        "SELECT id, name, goal, rules, max_active, attached FROM groups WHERE project_id = ?1 ORDER BY position, rowid",
     )?;
     let groups: Vec<Group> = statement
         .query_map(params![project.id.to_string()], |row| {
@@ -372,6 +374,7 @@ fn load(db: &Connection, root: &Path) -> rusqlite::Result<Option<LoadedProject>>
                 goal: row.get(2)?,
                 rules: serde_json::from_str::<Vec<PermissionRule>>(&row.get::<_, String>(3)?).unwrap_or_default(),
                 max_active: row.get::<_, Option<i64>>(4)?.map(|n| n as usize),
+                attached: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -431,6 +434,7 @@ mod tests {
             goal: "Pix".into(),
             rules: vec![PermissionRule::parse("Bash(cargo test:*)", Effect::Allow).unwrap()],
             max_active: Some(2),
+            attached: vec!["/tmp/elsewhere".into()],
         };
         let agent = Agent {
             id: Uuid::new_v4(),

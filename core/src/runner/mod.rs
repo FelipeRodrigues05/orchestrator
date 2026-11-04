@@ -92,6 +92,8 @@ pub struct RunnerContext {
     pub mcp: Option<crate::mcp::McpHandle>,
     /// `list_agents` / `ask_agent`: the agent's teammates.
     pub team: Option<crate::team::TeamHandle>,
+    /// The agent's places in the group's other projects (ADR 0024).
+    pub extra_dirs: Vec<PathBuf>,
 }
 
 pub fn for_provider(provider: &Provider, context: RunnerContext) -> RunnerResult<Box<dyn AgentRunner>> {
@@ -144,6 +146,7 @@ pub(crate) async fn ask_permission(
         agent_name: agent.name.clone(),
         group_name: context.group_name.clone(),
         worktree: agent.worktree.clone(),
+        extra: context.extra_dirs.clone(),
         paths,
     };
     context.broker.ask(request, ask).await

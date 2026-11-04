@@ -30,6 +30,9 @@ pub struct Group {
     /// At most this many agents working at once; `None`: no limit.
     #[serde(default)]
     pub max_active: Option<usize>,
+    /// Other project folders the group spans (ADR 0024): its agents work in each.
+    #[serde(default)]
+    pub attached: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

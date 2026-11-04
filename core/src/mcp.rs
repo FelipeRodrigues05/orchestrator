@@ -279,6 +279,7 @@ mod tests {
             sandbox: false,
             mcp: None,
             team: None,
+            extra_dirs: Vec::new(),
         };
         let url = mcp.register("t0ken", context, agent);
 
@@ -339,6 +340,7 @@ mod tests {
             sandbox: false,
             mcp: None,
             team: Some(crate::team::TeamHandle::new(team_tx)),
+            extra_dirs: Vec::new(),
         };
         let url = mcp.register("team", context, agent);
 

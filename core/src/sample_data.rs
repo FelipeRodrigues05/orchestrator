@@ -20,6 +20,7 @@ pub fn sample_state() -> AppState {
         goal: goal.into(),
         rules: Vec::new(),
         max_active: None,
+        attached: Vec::new(),
     };
     let api = group("API", "Pix payments in the backend");
     let front = group("Front", "Checkout screen");

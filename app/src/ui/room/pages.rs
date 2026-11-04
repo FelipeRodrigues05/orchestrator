@@ -7,7 +7,7 @@ use super::{ACCENT, DIM, FAINT, OK, TEXT, TITLE, WARN, s, title};
 use crate::ui::grid::{Grid, Lines, Rect, Style, Weight, fit};
 
 /// Every key and command, for `?`.
-const HELP: [(&str, &str); 51] = [
+const HELP: [(&str, &str); 52] = [
     (
         "Enter / i",
         "message the selected agent (or \"agente X: …\")",
@@ -66,6 +66,10 @@ const HELP: [(&str, &str); 51] = [
         "a global agent, for any project · pick one",
     ),
     (":forget <name>", "take an agent out of the library"),
+    (
+        ":attach <g>: <project>",
+        "the group spans another project too · :detach",
+    ),
     (
         ":remember [agent]: <note>",
         "add to its memory (it reads it in every task)",

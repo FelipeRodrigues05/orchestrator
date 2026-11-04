@@ -45,6 +45,7 @@ impl Room {
                 }
             }
             "persona" => self.persona_command(rest),
+            "attach" | "detach" => self.attach_command(&word, rest),
             "library" | "lib" | "save" | "forget" | "remember" => self.library_command(&word, rest),
             "color" | "colour" | "cor" => self.color_command(rest),
             "intro" => match rest {
@@ -239,6 +240,32 @@ impl Room {
             "forget" => self.outbox.push(Command::ForgetProfile(rest.to_owned())),
             "remember" => self.remember_command(rest),
             _ => self.palette = Some(Palette::library()),
+        }
+    }
+
+    /// `:attach API: ~/code/site` (or `:attach API site`, a recent project's name):
+    /// the group spans that project too; `:detach API: site` undoes it (ADR 0024).
+    fn attach_command(&mut self, word: &str, rest: &str) {
+        let (group, project) = rest
+            .split_once(':')
+            .or_else(|| rest.split_once(' '))
+            .map_or(("", ""), |(g, p)| (g.trim(), p.trim()));
+        if group.is_empty() || project.is_empty() {
+            self.say(
+                &format!("usage: :{word} <group>: <project folder or name>"),
+                WARN,
+            );
+        } else if word == "attach" {
+            let root = self.project_root(project);
+            self.outbox.push(Command::AttachProject {
+                group: group.to_owned(),
+                root,
+            });
+        } else {
+            self.outbox.push(Command::DetachProject {
+                group: group.to_owned(),
+                project: project.to_owned(),
+            });
         }
     }
 

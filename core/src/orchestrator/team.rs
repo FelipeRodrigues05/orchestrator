@@ -22,6 +22,14 @@ impl Orchestrator {
             let _ = write!(prompt, "\nGroup goal: {}", group.goal);
         }
         let _ = write!(prompt, "\nYour task: {}", agent.task);
+        let attached = self.attached_places(agent);
+        if !attached.is_empty() {
+            prompt.push_str("\nThe group spans other projects too; work in them by absolute path:");
+            for (root, place) in &attached {
+                let name = root.file_name().map_or_else(|| root.display().to_string(), |n| n.to_string_lossy().into());
+                let _ = write!(prompt, "\n- {name}: {}", place.display());
+            }
+        }
         // Short answers save the most tokens: output costs more than input.
         prompt.push_str(
             "\nAnswer briefly: what you did, what is left, what you need. Do not restate the task or paste whole \

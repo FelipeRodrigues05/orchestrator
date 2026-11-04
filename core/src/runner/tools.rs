@@ -86,9 +86,14 @@ pub fn permission_of(call: &ToolCall) -> (String, Value, Vec<PathBuf>) {
     }
 }
 
-fn confined(worktree: &Path, path: &str) -> Result<PathBuf, String> {
+/// `path` resolved against the worktree; it must stay in it or in an extra folder.
+fn confined(worktree: &Path, extra: &[PathBuf], path: &str) -> Result<PathBuf, String> {
     let full = resolve(worktree, Path::new(path));
-    if full.starts_with(worktree) { Ok(full) } else { Err(format!("{path} is outside the working directory")) }
+    if full.starts_with(worktree) || extra.iter().any(|folder| full.starts_with(folder)) {
+        Ok(full)
+    } else {
+        Err(format!("{path} is outside the working directories"))
+    }
 }
 
 fn truncate(mut text: String) -> String {
@@ -103,15 +108,17 @@ fn truncate(mut text: String) -> String {
     text
 }
 
-pub async fn run(call: &ToolCall, worktree: &Path, sandbox: bool) -> Result<String, String> {
+/// Runs a tool in `worktree`; `extra` are the agent's folders in the group's other
+/// projects (ADR 0024), reachable by absolute path.
+pub async fn run(call: &ToolCall, worktree: &Path, extra: &[PathBuf], sandbox: bool) -> Result<String, String> {
     let input = &call.input;
     match call.name.as_str() {
         "read_file" => {
-            let path = confined(worktree, text(input, "path"))?;
+            let path = confined(worktree, extra, text(input, "path"))?;
             tokio::fs::read_to_string(&path).await.map(truncate).map_err(|e| e.to_string())
         }
         "edit_file" => {
-            let path = confined(worktree, text(input, "path"))?;
+            let path = confined(worktree, extra, text(input, "path"))?;
             let (old, new) = (text(input, "old_text"), text(input, "new_text"));
             if old.is_empty() {
                 if let Some(parent) = path.parent() {
@@ -132,7 +139,7 @@ pub async fn run(call: &ToolCall, worktree: &Path, sandbox: bool) -> Result<Stri
         }
         "search" => {
             let folder = text(input, "path");
-            let folder = confined(worktree, if folder.is_empty() { "." } else { folder })?;
+            let folder = confined(worktree, extra, if folder.is_empty() { "." } else { folder })?;
             let pattern = Regex::new(text(input, "pattern")).map_err(|e| e.to_string())?;
             let worktree = worktree.to_path_buf();
             tokio::task::spawn_blocking(move || search(&folder, &worktree, &pattern)).await.map_err(|e| e.to_string())
@@ -141,7 +148,7 @@ pub async fn run(call: &ToolCall, worktree: &Path, sandbox: bool) -> Result<Stri
             let command = text(input, "command");
             let shell = ["-c".to_owned(), command.to_owned()];
             let (program, args) = if sandbox && crate::sandbox::available() {
-                crate::sandbox::wrap("sh", &shell, worktree)
+                crate::sandbox::wrap("sh", &shell, worktree, extra)
             } else {
                 ("sh".to_owned(), shell.to_vec())
             };
@@ -212,16 +219,24 @@ mod tests {
     async fn edit_read_search_and_run_inside_the_worktree() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        run(&call("edit_file", json!({ "path": "src/a.rs", "old_text": "", "new_text": "fn a() {}\n" })), root, false)
+        run(
+            &call("edit_file", json!({ "path": "src/a.rs", "old_text": "", "new_text": "fn a() {}\n" })),
+            root,
+            &[],
+            false,
+        )
+        .await
+        .unwrap();
+        run(&call("edit_file", json!({ "path": "src/a.rs", "old_text": "a()", "new_text": "b()" })), root, &[], false)
             .await
             .unwrap();
-        run(&call("edit_file", json!({ "path": "src/a.rs", "old_text": "a()", "new_text": "b()" })), root, false)
-            .await
-            .unwrap();
-        assert_eq!(run(&call("read_file", json!({ "path": "src/a.rs" })), root, false).await.unwrap(), "fn b() {}\n");
-        let found = run(&call("search", json!({ "pattern": "fn b" })), root, false).await.unwrap();
+        assert_eq!(
+            run(&call("read_file", json!({ "path": "src/a.rs" })), root, &[], false).await.unwrap(),
+            "fn b() {}\n"
+        );
+        let found = run(&call("search", json!({ "pattern": "fn b" })), root, &[], false).await.unwrap();
         assert_eq!(found, "src/a.rs:1: fn b() {}");
-        let output = run(&call("run_command", json!({ "command": "ls src" })), root, false).await.unwrap();
+        let output = run(&call("run_command", json!({ "command": "ls src" })), root, &[], false).await.unwrap();
         assert!(output.starts_with("a.rs") && output.ends_with("[exit 0]"));
     }
 
@@ -229,7 +244,7 @@ mod tests {
     async fn paths_outside_the_worktree_are_refused() {
         let dir = tempfile::tempdir().unwrap();
         let escape = call("read_file", json!({ "path": "../../etc/passwd" }));
-        assert!(run(&escape, dir.path(), false).await.is_err());
+        assert!(run(&escape, dir.path(), &[], false).await.is_err());
         let (tool, _, paths) = permission_of(&escape);
         assert_eq!((tool.as_str(), paths.len()), ("Read", 1));
     }
