@@ -7,7 +7,7 @@ use super::{ACCENT, DIM, FAINT, OK, TEXT, TITLE, WARN, s, title};
 use crate::ui::grid::{Grid, Lines, Rect, Style, Weight, fit};
 
 pub(super) fn draw_help(grid: &mut Grid) {
-    let lines: [(&str, &str); 38] = [
+    let lines: [(&str, &str); 45] = [
         (
             "Enter / i",
             "message the selected agent (or \"agente X: …\")",
@@ -17,13 +17,24 @@ pub(super) fn draw_help(grid: &mut Grid) {
             "command palette (type a :command there too)",
         ),
         ("n", "new agent wizard"),
-        ("F1-F5  1-5", "overview · agents · perms · log · setup"),
+        ("o", "open a project: recent, found on disk, or Browse…"),
+        ("@ in a message", "mention a file of the project (or @pet)"),
+        (
+            "Shift+Enter  ←→↑↓",
+            "new line · move in a message (long ones open an editor)",
+        ),
+        ("F1-F6  1-6", "overview · agents · perms · log · setup · read"),
+        ("r", "read the selected agent's conversation full screen"),
         ("j k  ↓ ↑", "select agent · s start/stop · e open in editor"),
         (
             "a  l  g  d",
             "allow · always (agent) · always (group) · deny",
         ),
         ("c", "acknowledge the caution light"),
+        (
+            "PgUp PgDn  wheel",
+            "scroll the console · Shift: the event log · End: newest",
+        ),
         ("Alt+1-9  [ ]", "switch between open projects"),
         ("Ctrl+Space", "hold to talk"),
         ("", ""),
@@ -35,11 +46,15 @@ pub(super) fn draw_help(grid: &mut Grid) {
             ":project <n>  :close",
             "focus an open project · close the focused one",
         ),
-        (":group <n>: <goal>", "create a group"),
+        (
+            ":group <n>[: <goal>]",
+            "create a group (the goal is optional)",
+        ),
         (
             ":new <g> <n> [p]: <task>",
             "create an agent (p = provider label, F5) · \" | persona\"",
         ),
+        (":color [agent] <color>", "its lines and name in a colour · auto · none"),
         (
             ":persona [agent]: <who>",
             "who the agent is; agents ask teammates with ask_agent",
@@ -51,6 +66,10 @@ pub(super) fn draw_help(grid: &mut Grid) {
             "open the agent's worktree · :edit project",
         ),
         (":key <service>", "store an API key in the Secret Service"),
+        (
+            ":model [id]  :fallback",
+            "the agent's model · order on usage limits (auto, reset)",
+        ),
         (
             ":provider <p|svc/model>",
             "switch the agent mid-task · :update CLIs",
@@ -135,8 +154,8 @@ pub(super) fn draw_guide(grid: &mut Grid, area: Rect, state: &AppState) {
     let new = format!(":new API Tests {provider}: write the /pix tests");
     let steps: [(&str, &str, bool); 4] = [
         (
-            ":open ~/code/my-repo",
-            "open a git repository",
+            "o  or  :open ~/code/my-repo",
+            "open a repository · or n: agents need no project",
             state.project().is_some(),
         ),
         (

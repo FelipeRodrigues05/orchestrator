@@ -38,6 +38,9 @@ impl Palette {
                 spans
             }
             Mode::OpenProject => vec![s("OPEN PROJECT", TITLE)],
+            Mode::Mention(_) => vec![s("MENTION A FILE", TITLE)],
+            Mode::Model(_) => vec![s("MODEL", TITLE)],
+            Mode::Color(_) => vec![s("COLOR", TITLE)],
             Mode::ApiKey => vec![s("API KEY", TITLE)],
             Mode::OpenIn => vec![s("OPEN IN EDITOR", TITLE)],
             Mode::SwitchProvider(_) => vec![s("SWITCH PROVIDER", TITLE)],
@@ -56,7 +59,10 @@ impl Palette {
             ),
             Mode::NewAgent(w) => match w.step {
                 Step::Group => ("group", "pick a group, or type a new name"),
-                Step::GroupGoal => ("goal", "what the whole group works towards"),
+                Step::GroupGoal => (
+                    "goal",
+                    "optional: context every agent of the group gets · Enter skips",
+                ),
                 Step::Name => (
                     "name",
                     "short and speakable: the voice calls it by this name",
@@ -65,12 +71,27 @@ impl Palette {
                 Step::Task => ("task", "what this agent should do"),
                 Step::Persona => (
                     "persona",
-                    "who it is: its focus, what it leaves to teammates · Enter creates it (empty: none)",
+                    "pick one (marketing, backend…) or describe your own · Enter creates it",
                 ),
             },
             Mode::NewGroup { name: None } => ("name", "the group's name"),
-            Mode::NewGroup { name: Some(_) } => ("goal", "what the whole group works towards"),
-            Mode::OpenProject => ("path", "a git repository, e.g. ~/code/shop"),
+            Mode::NewGroup { name: Some(_) } => (
+                "goal",
+                "optional: context every agent of the group gets · Enter skips",
+            ),
+            Mode::OpenProject => (
+                "project",
+                "type its name, or a path · Browse… picks a folder",
+            ),
+            Mode::Mention(_) => ("file", "type part of its name or path · Esc keeps the @"),
+            Mode::Color(_) => (
+                "color",
+                "its lines in the log and its name everywhere · red stays for what is urgent",
+            ),
+            Mode::Model(_) => (
+                "model",
+                "what the agent's CLI offers, or type an id · same provider, conversation kept",
+            ),
             Mode::ApiKey => ("service", "the key is typed next, masked"),
             Mode::OpenIn => ("editor", "opens the selected agent's worktree"),
             Mode::SwitchProvider(_) => (
@@ -79,7 +100,7 @@ impl Palette {
             ),
             Mode::Persona(_) => (
                 "persona",
-                "who it is: \"backend only; asks Integration to check the front\" · empty clears it",
+                "pick one (marketing, backend…) or describe your own",
             ),
             Mode::Voice => (
                 "voice",

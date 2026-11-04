@@ -36,6 +36,8 @@ use crate::{
 };
 
 const MAX_LOG: usize = 2000;
+/// How many recently opened projects the open-project list offers.
+const RECENT_PROJECTS: usize = 20;
 const PUBLISH_EVERY: Duration = Duration::from_millis(100);
 
 /// UI → runtime.
@@ -64,6 +66,19 @@ pub enum Command {
         /// Who the agent is; empty for none.
         persona: String,
     },
+    /// The fallback order on usage limits: `claude/opus, codex/gpt-6-astra, ollama`;
+    /// `auto` goes by closeness, `reset` forgets which models hit their limit.
+    SetFallback(String),
+    /// Asks the agent's provider which models it offers (the list then shows up in
+    /// `Agent::models`), also while the agent is stopped.
+    ProbeModels(Uuid),
+    /// Switches the model the agent works with (within its provider).
+    SetModel {
+        agent: Uuid,
+        model: String,
+    },
+    /// The colour the agent's lines are painted in (`None`: picked from its id).
+    SetColor { agent: Uuid, color: Option<String> },
     /// Changes who the agent is; it takes effect on its next start.
     SetPersona {
         agent: Uuid,
@@ -180,6 +195,8 @@ pub struct Config {
     pub providers: Vec<ProviderOption>,
     /// Sandbox agents with bubblewrap when it is installed.
     pub sandbox: bool,
+    /// The personal workspace: the project agents go to when none is open.
+    pub workspace: PathBuf,
 }
 
 impl Default for Config {
@@ -192,6 +209,7 @@ impl Default for Config {
             runners: Arc::new(runner::for_provider),
             providers: Vec::new(),
             sandbox: true,
+            workspace: crate::voice::data_dir().join("personal"),
         }
     }
 }
@@ -221,6 +239,8 @@ enum Internal {
     },
     /// A command queued from inside the actor (async ones from the pet).
     Run(Command),
+    /// The background search for git repositories finished.
+    Repositories(Vec<PathBuf>),
     /// An agent called `list_agents` or `ask_agent`.
     Team(TeamRequest),
     /// An update finished; `agent` is set when it was triggered by that agent's error.
@@ -233,6 +253,7 @@ enum Internal {
 
 enum AgentCmd {
     Send(String),
+    SetModel(String),
     Stop,
 }
 
@@ -264,6 +285,10 @@ struct Orchestrator {
     mcp: Option<crate::mcp::McpHandle>,
     /// Saved UI layout of each open project.
     layouts: HashMap<Uuid, Option<String>>,
+    /// Picks another model when an agent hits its usage limit.
+    router: crate::router::Router,
+    /// The personal workspace (`Config::workspace`).
+    workspace: PathBuf,
     /// Handed to runners: `list_agents` and `ask_agent`.
     team: TeamHandle,
     /// Turns sent to and finished by each agent, and who waits for which turn.
@@ -340,6 +365,8 @@ pub async fn run_with(
         host_choice: None,
         waiting: Vec::new(),
         layouts: HashMap::new(),
+        workspace: config.workspace,
+        router: crate::router::Router::default(),
         team,
         turns: HashMap::new(),
         asking: HashMap::new(),
@@ -356,6 +383,9 @@ pub async fn run_with(
         orchestrator.refresh_providers();
     }
     orchestrator.reopen_projects().await;
+    if config.discover {
+        orchestrator.find_repositories();
+    }
     if orchestrator.publish().await {
         orchestrator.serve(commands, internal).await;
     }
@@ -399,15 +429,28 @@ impl Orchestrator {
         if let (Some(id), Some(voice)) = (store.setting("voice").await, &self.voice) {
             voice.set_voice(Some(id));
         }
+        if let Some(chain) = store.setting("fallback_chain").await {
+            self.router.chain = parse_chain(&chain);
+        }
         let minutes = store.setting("permission_timeout_minutes").await.and_then(|m| m.parse::<u64>().ok());
         if let Some(minutes) = minutes {
             self.broker.set_timeout(Duration::from_secs(minutes * 60));
         }
     }
 
+    /// Looks for git repositories under the usual folders, off the actor's thread.
+    fn find_repositories(&self) {
+        let inbox = self.inbox.clone();
+        tokio::task::spawn_blocking(move || {
+            let found = discovery::git_repositories(&discovery::project_dirs(), 4, 500);
+            let _ = inbox.send(Internal::Repositories(found));
+        });
+    }
+
     /// The projects open when the app last ran, and the one in focus.
     async fn reopen_projects(&mut self) {
         let Some(store) = self.store.clone() else { return };
+        self.state.recent_projects = store.recent(RECENT_PROJECTS).await;
         // `last_project` is what older versions kept: one project.
         let open = match store.setting("open_projects").await {
             Some(roots) => roots,
@@ -553,3 +596,12 @@ impl Orchestrator {
 
 #[cfg(test)]
 mod tests;
+
+/// `claude/opus, codex/gpt-6-astra` → the names, in order.
+fn parse_chain(text: &str) -> Vec<String> {
+    text.split([',', ' '])
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != "auto")
+        .map(str::to_owned)
+        .collect()
+}

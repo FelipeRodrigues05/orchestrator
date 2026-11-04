@@ -1,5 +1,6 @@
 //! Scripted runner for tests: echoes messages, `perm:<command>` asks the broker to
-//! run `<command>` and reports the decision, `ask:<agent>:<message>` asks a teammate.
+//! run `<command>` and reports the decision, `ask:<agent>:<message>` asks a teammate,
+//! `limit:` fails like a provider out of quota.
 //! Turns run one after another, like a real agent's.
 
 use async_trait::async_trait;
@@ -27,6 +28,9 @@ impl FakeRunner {
 impl AgentRunner for FakeRunner {
     async fn start(&mut self, agent: &Agent, _mcp_url: &str) -> RunnerResult<()> {
         let info = AgentInfo::of(agent);
+        let current = agent.model.clone().or_else(|| Some("fake-1".into()));
+        let available = vec!["fake-1".into(), "fake-2".into()];
+        let _ = self.events_tx.send(AgentEvent::Models { current, available }).await;
         let events = self.events_tx.clone();
         let context = self.context.clone();
         let (prompts, mut queue) = mpsc::unbounded_channel::<String>();
@@ -36,6 +40,15 @@ impl AgentRunner for FakeRunner {
                 // The orchestrator wraps first prompts in a briefing; the script is the last line.
                 let last = text.lines().last().unwrap_or_default().trim();
                 let script = last.strip_prefix("Operator: ").unwrap_or(last).to_owned();
+                if script == "nomodel:" {
+                    let error = r#"Internal error: {"message": "{\"error\":{\"message\":\"The 'fake-1' model requires a newer version of Codex.\"}}"}"#;
+                    let _ = events.send(AgentEvent::Error(error.into())).await;
+                    continue;
+                }
+                if script == "limit:" {
+                    let _ = events.send(AgentEvent::Error("Claude AI usage limit reached|1793300000".into())).await;
+                    continue;
+                }
                 let reply = if let Some(command) = script.strip_prefix("perm:") {
                     let decision =
                         ask_permission(&context, &info, "Bash", json!({ "command": command }), Vec::new()).await;
@@ -63,6 +76,12 @@ impl AgentRunner for FakeRunner {
 
     fn events(&mut self) -> mpsc::Receiver<AgentEvent> {
         self.events_rx.take().unwrap_or_else(|| mpsc::channel(1).1)
+    }
+
+    async fn set_model(&mut self, model: &str) -> RunnerResult<()> {
+        let available = vec!["fake-1".into(), "fake-2".into()];
+        let _ = self.events_tx.send(AgentEvent::Models { current: Some(model.into()), available }).await;
+        Ok(())
     }
 
     async fn stop(&mut self) -> RunnerResult<()> {

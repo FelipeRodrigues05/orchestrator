@@ -45,6 +45,17 @@ pub struct Agent {
     #[serde(default)]
     pub persona: String,
     pub provider: Provider,
+    /// The model the agent's CLI should use (`gpt-6-astra`, `opus`…); `None`: the
+    /// CLI's own default. API agents keep theirs in `provider`.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Models the running CLI offers, as it reported them; empty when unknown.
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// The colour its lines are painted in: a name from the room's palette,
+    /// `none` for plain text, `None` for one picked from its id.
+    #[serde(default)]
+    pub color: Option<String>,
     pub worktree: PathBuf,
     pub state: AgentState,
     pub rules: Vec<PermissionRule>,
@@ -417,6 +428,10 @@ pub struct AppState {
     pub sandbox: bool,
     /// Opaque UI layout saved with the focused project.
     pub layout: Option<String>,
+    /// Projects opened before, newest first, to reopen without typing a path.
+    pub recent_projects: Vec<PathBuf>,
+    /// Git repositories found under the usual project folders.
+    pub repositories: Vec<PathBuf>,
 }
 
 impl AppState {

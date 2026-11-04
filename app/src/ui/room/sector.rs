@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use orch_core::model::{Agent, AgentState, AppState};
 
-use super::format::{lamp_for, sparkline, uptime};
+use super::format::{agent_style, lamp_for, sparkline, uptime};
 use super::pages::draw_guide;
 use super::{
     ACCENT, Action, BLOCK_WIDTH, DIM, ERROR, FAINT, FRAME, Room, SPARK_WIDTH, TEXT, WARN, s,
@@ -381,7 +381,7 @@ impl Room {
         let name_style = if selected {
             ACCENT.bold().inverse()
         } else {
-            TEXT.bold()
+            agent_style(agent).unwrap_or(TEXT).bold()
         };
         let blink_off = agent.state == AgentState::AwaitingPermission && !self.blink();
         grid.put(x, y, if blink_off { ' ' } else { glyph }, lamp);

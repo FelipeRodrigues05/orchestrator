@@ -15,8 +15,8 @@ use agent_client_protocol::{
         v1::{
             ContentBlock, InitializeRequest, McpServer, McpServerHttp, NewSessionRequest, PermissionOptionKind,
             PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-            SelectedPermissionOutcome, SessionNotification, SessionUpdate, TextContent, ToolCallStatus, ToolCallUpdate,
-            ToolKind,
+            SelectedPermissionOutcome, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, TextContent,
+            ToolCallStatus, ToolCallUpdate, ToolKind,
         },
     },
 };
@@ -28,11 +28,17 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use super::{AgentEvent, AgentInfo, AgentRunner, RunnerContext, RunnerResult, ToolStatus, ask_permission};
 use crate::model::{Agent, Decision, Provider};
 
+/// What the session task gets: a message to answer, or a model to switch to.
+enum Input {
+    Prompt(String),
+    Model(String),
+}
+
 pub struct AcpRunner {
     context: RunnerContext,
     events_tx: mpsc::Sender<AgentEvent>,
     events_rx: Option<mpsc::Receiver<AgentEvent>>,
-    prompts: Option<mpsc::UnboundedSender<String>>,
+    prompts: Option<mpsc::UnboundedSender<Input>>,
     task: Option<JoinHandle<()>>,
     pid: Option<u32>,
     /// This agent's path on the app's MCP server (team tools).
@@ -116,7 +122,12 @@ impl AgentRunner for AcpRunner {
 
     async fn send(&mut self, text: String) -> RunnerResult<()> {
         let prompts = self.prompts.as_ref().ok_or("agent not started")?;
-        prompts.send(text).map_err(|_| "agent is not running".to_owned())
+        prompts.send(Input::Prompt(text)).map_err(|_| "agent is not running".to_owned())
+    }
+
+    async fn set_model(&mut self, model: &str) -> RunnerResult<()> {
+        let prompts = self.prompts.as_ref().ok_or("agent not started")?;
+        prompts.send(Input::Model(model.to_owned())).map_err(|_| "agent is not running".to_owned())
     }
 
     fn events(&mut self) -> mpsc::Receiver<AgentEvent> {
@@ -141,7 +152,7 @@ impl AgentRunner for AcpRunner {
 
 async fn connect<T>(
     transport: T,
-    mut prompts: mpsc::UnboundedReceiver<String>,
+    mut prompts: mpsc::UnboundedReceiver<Input>,
     events: mpsc::Sender<AgentEvent>,
     context: RunnerContext,
     info: AgentInfo,
@@ -153,6 +164,7 @@ where
     let titles = Arc::new(Mutex::new(HashMap::<String, String>::new()));
     let updates = events.clone();
     let worktree = info.worktree.clone();
+    let wanted_model = info.model.clone();
     Client
         .builder()
         .name("orchestrator")
@@ -189,7 +201,56 @@ where
                 None => {}
             }
             let session = cx.send_request(session).block_task().await?;
-            while let Some(text) = prompts.recv().await {
+            let mut models = ModelOption::of(&session.config_options);
+            if let Some(models) = &mut models {
+                if let Some(wanted) = wanted_model.as_deref().filter(|w| Some(*w) != models.current.as_deref()) {
+                    if models.available.iter().any(|m| m == wanted) {
+                        let request =
+                            SetSessionConfigOptionRequest::new(session.session_id.clone(), models.id.clone(), wanted);
+                        match cx.send_request(request).block_task().await {
+                            Ok(_) => models.current = Some(wanted.to_owned()),
+                            Err(error) => {
+                                let _ =
+                                    events.send(AgentEvent::Notice(format!("could not use {wanted}: {error}"))).await;
+                            }
+                        }
+                    } else {
+                        let current = models.current.clone().unwrap_or_default();
+                        let text = format!("{wanted} is not offered by this CLI; it stays on {current}");
+                        let _ = events.send(AgentEvent::Notice(text)).await;
+                    }
+                }
+                let _ = events.send(models.event()).await;
+            }
+            while let Some(input) = prompts.recv().await {
+                let text = match input {
+                    Input::Prompt(text) => text,
+                    Input::Model(wanted) => {
+                        let Some(models) = &mut models else {
+                            let _ = events
+                                .send(AgentEvent::Notice("this CLI does not let the app pick a model".into()))
+                                .await;
+                            continue;
+                        };
+                        let request = SetSessionConfigOptionRequest::new(
+                            session.session_id.clone(),
+                            models.id.clone(),
+                            wanted.as_str(),
+                        );
+                        match cx.send_request(request).block_task().await {
+                            Ok(_) => {
+                                models.current = Some(wanted);
+                                let _ = events.send(models.event()).await;
+                            }
+                            Err(error) => {
+                                let _ = events
+                                    .send(AgentEvent::Notice(format!("could not switch to {wanted}: {error}")))
+                                    .await;
+                            }
+                        }
+                        continue;
+                    }
+                };
                 let prompt =
                     PromptRequest::new(session.session_id.clone(), vec![ContentBlock::Text(TextContent::new(text))]);
                 let response = cx.send_request(prompt).block_task().await?;
@@ -205,6 +266,81 @@ where
         })
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Asks an ACP CLI which models it offers, without a task: `initialize` and
+/// `session/new` in `cwd`, read the model option, close. Returns the CLI's default
+/// and the list.
+pub async fn probe_models(command: &str, cwd: &std::path::Path) -> Result<(Option<String>, Vec<String>), String> {
+    let command = super::update::latest_command(command);
+    let words = shell_words::split(&command).map_err(|e| e.to_string())?;
+    let (program, args) = words.split_first().ok_or("empty command")?;
+    let mut child = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .process_group(0)
+        .spawn()
+        .map_err(|e| format!("could not start {program}: {e}"))?;
+    let stdin = child.stdin.take().ok_or("no stdin")?;
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let transport = ByteStreams::new(stdin.compat_write(), stdout.compat());
+    let cwd = cwd.to_path_buf();
+    let probe =
+        Client.builder().name("orchestrator").connect_with(transport, async move |cx: ConnectionTo<AcpAgent>| {
+            cx.send_request(InitializeRequest::new(ProtocolVersion::V1)).block_task().await?;
+            let session = cx.send_request(NewSessionRequest::new(cwd)).block_task().await?;
+            Ok(ModelOption::of(&session.config_options))
+        });
+    let found = tokio::time::timeout(std::time::Duration::from_secs(60), probe)
+        .await
+        .map_err(|_| "the CLI did not answer in a minute".to_owned())?
+        .map_err(|e| e.to_string());
+    if let Some(pid) = child.id() {
+        let _ = Command::new("kill").arg("--").arg(format!("-{pid}")).status().await;
+    }
+    let models = found?.ok_or("this CLI does not list its models")?;
+    Ok((models.current, models.available))
+}
+
+/// The session's model option, as the agent offers it (`session/new` config options).
+struct ModelOption {
+    id: String,
+    current: Option<String>,
+    available: Vec<String>,
+}
+
+impl ModelOption {
+    /// The first select option in the `model` category. Read through JSON: the
+    /// option lists come grouped or flat, and only the values matter here.
+    fn of<T: serde::Serialize>(options: &T) -> Option<Self> {
+        let options = serde_json::to_value(options).ok()?;
+        let option = options.as_array()?.iter().find(|o| o["category"] == "model")?;
+        let mut available = Vec::new();
+        collect_values(&option["options"], &mut available);
+        Some(Self {
+            id: option["id"].as_str()?.to_owned(),
+            current: option["currentValue"].as_str().map(str::to_owned),
+            available,
+        })
+    }
+
+    fn event(&self) -> AgentEvent {
+        AgentEvent::Models { current: self.current.clone(), available: self.available.clone() }
+    }
+}
+
+/// Every `value` in a flat or grouped option list.
+fn collect_values(options: &Value, out: &mut Vec<String>) {
+    for option in options.as_array().into_iter().flatten() {
+        match option["value"].as_str() {
+            Some(value) => out.push(value.to_owned()),
+            None => collect_values(&option["options"], out),
+        }
+    }
 }
 
 fn translate(update: SessionUpdate, titles: &Mutex<HashMap<String, String>>) -> Vec<AgentEvent> {
@@ -293,6 +429,24 @@ mod tests {
     use super::*;
     use crate::{broker, model::AgentState};
 
+    #[test]
+    fn reads_the_model_option_flat_or_grouped() {
+        let flat = json!([
+            { "id": "mode", "category": "mode", "currentValue": "build", "options": [{ "value": "build" }] },
+            { "id": "model", "category": "model", "currentValue": "opencode/big-pickle",
+              "options": [{ "value": "opencode/big-pickle" }, { "value": "opencode/beam-free" }] }
+        ]);
+        let models = ModelOption::of(&flat).unwrap();
+        assert_eq!(models.id, "model");
+        assert_eq!(models.current.as_deref(), Some("opencode/big-pickle"));
+        assert_eq!(models.available, ["opencode/big-pickle", "opencode/beam-free"]);
+
+        let grouped = json!([{ "id": "m", "category": "model", "currentValue": "gpt-6",
+            "options": [{ "group": "openai", "options": [{ "value": "gpt-6" }, { "value": "gpt-6-astra" }] }] }]);
+        assert_eq!(ModelOption::of(&grouped).unwrap().available, ["gpt-6", "gpt-6-astra"]);
+        assert!(ModelOption::of(&json!([])).is_none());
+    }
+
     /// Every edit goes through the broker, even with CLIs that allow edits by default.
     #[tokio::test]
     #[ignore = "needs a real ACP CLI"]
@@ -331,6 +485,9 @@ mod tests {
             started_at: None,
             usage: Default::default(),
             persona: String::new(),
+            model: None,
+            models: Vec::new(),
+            color: None,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();
@@ -379,6 +536,9 @@ mod tests {
             started_at: None,
             usage: Default::default(),
             persona: String::new(),
+            model: None,
+            models: Vec::new(),
+            color: None,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();
@@ -444,6 +604,9 @@ mod tests {
             started_at: None,
             usage: Default::default(),
             persona: String::new(),
+            model: None,
+            models: Vec::new(),
+            color: None,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();
@@ -470,5 +633,73 @@ mod tests {
         let (to, _) = asked.expect("the agent never called ask_agent");
         assert!(to.eq_ignore_ascii_case("backend"), "asked {to}");
         assert!(text.contains("ZX-4471"), "got {text:?}");
+    }
+
+    /// The chosen model reaches a real CLI's session, and it can switch again:
+    /// `cargo test -p core acp_model -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "needs a real ACP CLI that offers models"]
+    async fn acp_model_is_chosen_and_switched() {
+        let command = std::env::var("ORCH_ACP_COMMAND").unwrap_or_else(|_| "opencode acp".into());
+        let wanted = std::env::var("ORCH_ACP_MODEL").unwrap_or_else(|_| "opencode/beam-free".into());
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let context = RunnerContext {
+            broker: broker::spawn(Duration::from_secs(5), tx, None),
+            group_id: uuid::Uuid::new_v4(),
+            group_name: "Smoke".into(),
+            sandbox: crate::sandbox::available(),
+            mcp: None,
+            team: None,
+        };
+        let agent = Agent {
+            id: uuid::Uuid::new_v4(),
+            group_id: context.group_id,
+            name: "Smoke".into(),
+            task: String::new(),
+            provider: Provider::CliAcp { command },
+            worktree: dir.path().into(),
+            state: AgentState::Stopped,
+            rules: Vec::new(),
+            started_at: None,
+            usage: Default::default(),
+            persona: String::new(),
+            model: Some(wanted.clone()),
+            models: Vec::new(),
+            color: None,
+        };
+        let mut runner = AcpRunner::new(context);
+        runner.start(&agent, "").await.unwrap();
+        let mut events = runner.events();
+        let (current, available) =
+            tokio::time::timeout(Duration::from_secs(60), next_models(&mut events)).await.unwrap();
+        eprintln!("offers {available:?}");
+        assert_eq!(current.as_deref(), Some(wanted.as_str()));
+        let other = available.iter().find(|m| **m != wanted).cloned().expect("a second model");
+        runner.set_model(&other).await.unwrap();
+        let (current, _) = tokio::time::timeout(Duration::from_secs(30), next_models(&mut events)).await.unwrap();
+        runner.stop().await.unwrap();
+        assert_eq!(current.as_deref(), Some(other.as_str()));
+    }
+
+    /// `cargo test -p core acp_probe -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "needs a real ACP CLI that offers models"]
+    async fn acp_probe_lists_models_without_a_task() {
+        let command = std::env::var("ORCH_ACP_COMMAND").unwrap_or_else(|_| "opencode acp".into());
+        let dir = tempfile::tempdir().unwrap();
+        let (current, available) = probe_models(&command, dir.path()).await.unwrap();
+        eprintln!("default {current:?}, offers {available:?}");
+        assert!(!available.is_empty());
+    }
+
+    async fn next_models(events: &mut mpsc::Receiver<AgentEvent>) -> (Option<String>, Vec<String>) {
+        loop {
+            match events.recv().await {
+                Some(AgentEvent::Models { current, available }) => return (current, available),
+                Some(other) => eprintln!("{other:?}"),
+                None => panic!("the session ended"),
+            }
+        }
     }
 }

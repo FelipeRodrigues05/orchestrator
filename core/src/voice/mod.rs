@@ -107,10 +107,12 @@ pub fn data_dir() -> PathBuf {
     dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("orchestrator")
 }
 
-/// The small model the wake word checks utterances with; the main one otherwise.
+/// The model the wake word checks utterances with: only `tiny`. Larger models take
+/// seconds of every core per utterance, and the microphone never closes.
 fn find_wake_model() -> Option<PathBuf> {
-    let tiny = data_dir().join("models/ggml-tiny.bin");
-    tiny.is_file().then_some(tiny).or_else(find_whisper_model)
+    let tiny =
+        std::env::var_os("ORCH_WAKE_MODEL").map_or_else(|| data_dir().join("models/ggml-tiny.bin"), PathBuf::from);
+    tiny.is_file().then_some(tiny)
 }
 
 /// Transcribes on a blocking thread with a lazily loaded model.
@@ -119,12 +121,13 @@ fn transcribe_later(
     context: Arc<OnceLock<Result<WhisperContext, String>>>,
     language: Language,
     hint: Option<String>,
+    threads: usize,
     samples: Vec<f32>,
     done: impl FnOnce(Result<String, String>) + Send + 'static,
 ) {
     tokio::spawn(async move {
         let result = tokio::task::spawn_blocking(move || match context.get_or_init(|| stt::load_model(&model)) {
-            Ok(context) => stt::transcribe(context, &samples, language.code(), hint.as_deref()),
+            Ok(context) => stt::transcribe(context, &samples, language.code(), hint.as_deref(), threads),
             Err(error) => Err(error.clone()),
         })
         .await

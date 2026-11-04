@@ -113,6 +113,8 @@ Roadmap steps 1–8 are implemented. Evidence per area:
 | Long lines | done | log and console wrap under the text column |
 | Several open projects (ADR 0017) | done | orchestrator test (side by side, focus, close); room test (PROJECTS column, Alt+n) |
 | Personas, agents calling each other (ADR 0018) | done | orchestrator tests (ask starts a stopped teammate, answer returns; briefing); MCP test; real opencode run calling ask_agent |
+| Agents without a project, ready-made personas | done | orchestrator test (personal workspace opened, agent runs in its worktree); palette tests (preset and typed personas) |
+| `@` file mentions, open project list | done | palette and room tests (mention inserts the file, `:open <name>`, Browse…, recent/found repositories) |
 | Desktop install, tray (ADR 0019) | done | `scripts/install.sh`; launched via `gtk-launch` from Hyprland; tray registered with the SNI watcher, close hides, tray click shows |
 
 ## Not verified on real hardware/accounts
@@ -143,16 +145,18 @@ left is verification on real hardware and accounts (above) plus these follow-ups
 
 ## Known limitations and gotchas
 
-- `codex-acp` 0.16.0 (newest) embeds an older Codex that rejects the
-  `gpt-5.6-sol` model in `~/.codex/config.toml`; switch provider (`:provider`) or
-  set a model the adapter knows.
+- `codex-acp` embeds a Codex older than the newest models (`gpt-5.6-sol` in
+  `~/.codex/config.toml`). The router treats "requires a newer version" as a model
+  the CLI cannot run and switches the agent to another model of the same CLI
+  (ADR 0020 amendment); `:model` picks one by hand.
 - opencode allows edits/shell by default; the ACP runner forces "ask" through
   `OPENCODE_CONFIG_CONTENT` so the broker sees them.
 - The risky-Bash guard is a heuristic; the sandbox is the real enforcement.
 - The permission modal is drawn on the canvas (not a screen-reader widget); the
   system notification and the spoken announcement are the non-visual paths.
-- Choosing a model *inside* an ACP CLI is not supported; model switching works for
-  API/Ollama providers (`service/model`).
+- Models: ACP CLIs that list a `model` config option (opencode does) switch in the
+  live session; Claude Code restarts with `--model` and the conversation handed
+  over; CLIs that list no models get the id passed through and say if it fails.
 - Group limits apply to starting agents; a follow-up message to an idle (Done)
   agent is not queued.
 - Claude Code runs with `--permission-mode manual` so every action not covered by

@@ -5,6 +5,7 @@
 mod actions;
 mod draw;
 mod items;
+mod personas;
 
 use orch_core::{model::AppState, orchestrator::Command};
 use uuid::Uuid;
@@ -31,6 +32,10 @@ pub enum Outcome {
     Help,
     /// A `:command` typed in the palette.
     Run(String),
+    /// Text to add to the message being typed (a mentioned file).
+    Insert(String),
+    /// Pick a folder with the system's folder chooser.
+    Browse,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +56,12 @@ enum Mode {
     Voice,
     /// Type who an agent is.
     Persona(Uuid),
+    /// `@` in a message: the project's files, to mention one.
+    Mention(Vec<String>),
+    /// Pick the model an agent works with, among those its CLI offers.
+    Model(Uuid),
+    /// Pick the colour an agent's lines are painted in.
+    Color(Uuid),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -111,6 +122,18 @@ enum Pick {
     FocusProject(Uuid),
     CloseProject(Uuid),
     Persona(Uuid),
+    OpenPath(std::path::PathBuf),
+    Browse,
+    Insert(String),
+    /// A persona, ready-made or typed; empty for none.
+    PersonaText(String),
+    ChooseModel(Uuid),
+    Model(String),
+    /// A placeholder while something is on its way.
+    Waiting,
+    ChooseColor(Uuid),
+    /// `None`: picked from the agent's id; `Some("none")`: plain text.
+    Color(Option<String>),
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +156,33 @@ impl Palette {
     pub fn commands() -> Self {
         Self {
             mode: Mode::Commands,
+            query: String::new(),
+            cursor: 0,
+        }
+    }
+
+    /// Recent projects, repositories found on disk, a typed path or the folder chooser.
+    pub fn open_project() -> Self {
+        Self {
+            mode: Mode::OpenProject,
+            query: String::new(),
+            cursor: 0,
+        }
+    }
+
+    /// The models `agent` can switch to.
+    pub fn model(agent: Uuid) -> Self {
+        Self {
+            mode: Mode::Model(agent),
+            query: String::new(),
+            cursor: 0,
+        }
+    }
+
+    /// The files of the project, for `@` in a message.
+    pub fn mention(files: Vec<String>) -> Self {
+        Self {
+            mode: Mode::Mention(files),
             query: String::new(),
             cursor: 0,
         }
@@ -216,11 +266,8 @@ impl Palette {
     /// Free-text steps have no list: Enter takes the query.
     fn free_text(&self) -> bool {
         match &self.mode {
-            Mode::NewAgent(w) => matches!(
-                w.step,
-                Step::GroupGoal | Step::Name | Step::Task | Step::Persona
-            ),
-            Mode::NewGroup { .. } | Mode::OpenProject | Mode::Persona(_) => true,
+            Mode::NewAgent(w) => matches!(w.step, Step::GroupGoal | Step::Name | Step::Task),
+            Mode::NewGroup { .. } => true,
             _ => false,
         }
     }
@@ -239,10 +286,22 @@ impl Palette {
                 // "+ create group" and ":command" always match what was typed.
                 let custom = matches!(&item.pick, Pick::Provider(_) | Pick::Voice(_))
                     && item.label.starts_with("use ");
-                if custom || matches!(item.pick, Pick::CreateGroup(_) | Pick::Run(_)) {
+                let typed_path = matches!(
+                    item.pick,
+                    Pick::OpenPath(_) | Pick::PersonaText(_) | Pick::Model(_)
+                ) && (item.label.starts_with("open ")
+                    || item.label.starts_with("use “"));
+                if custom || typed_path || matches!(item.pick, Pick::CreateGroup(_) | Pick::Run(_))
+                {
                     return Some((-1000, order, item, Vec::new()));
                 }
-                fuzzy(query, &item.label).map(|(score, hits)| (score, order, item, hits))
+                // Projects match on their folder too: "personal shop".
+                let text = if self.mode == Mode::OpenProject {
+                    format!("{} {}", item.label, item.detail)
+                } else {
+                    item.label.clone()
+                };
+                fuzzy(query, &text).map(|(score, hits)| (score, order, item, hits))
             })
             .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
@@ -255,9 +314,9 @@ impl Palette {
     pub fn enter(&mut self, state: &AppState, selected: Option<Uuid>) -> Outcome {
         if self.free_text() {
             let text = self.query.trim().to_owned();
-            // A persona may be left empty: no persona.
-            let optional = matches!(&self.mode, Mode::NewAgent(w) if w.step == Step::Persona)
-                || matches!(self.mode, Mode::Persona(_));
+            // A group's goal may be left empty.
+            let optional = matches!(&self.mode, Mode::NewAgent(w) if w.step == Step::GroupGoal)
+                || matches!(self.mode, Mode::NewGroup { name: Some(_) });
             if text.is_empty() && !optional {
                 return Outcome::Keep;
             }

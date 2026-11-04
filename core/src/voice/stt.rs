@@ -1,5 +1,5 @@
 //! Speech input: microphone capture with cpal on its own thread (the stream is not
-//! `Send`) and transcription with whisper-rs, language fixed to Portuguese.
+//! `Send`) and transcription with whisper-rs, in the operator's language (`:lang`).
 
 use std::{
     path::Path,
@@ -122,6 +122,16 @@ pub fn load_model(path: &Path) -> Result<WhisperContext, String> {
     WhisperContext::new_with_params(path, WhisperContextParameters::default()).map_err(|e| e.to_string())
 }
 
+/// Threads for checking an utterance for the pet's name: `tiny` needs few, and the
+/// microphone stays open, so this must stay cheap.
+pub const WAKE_THREADS: usize = 2;
+
+/// Threads for a spoken command: half the cores, at most four, so agents, the UI and
+/// the rest of the machine keep running while whisper works.
+pub fn command_threads() -> usize {
+    thread::available_parallelism().map_or(2, |n| (n.get() / 2).clamp(1, 4))
+}
+
 /// CPU heavy: call from `spawn_blocking`.
 /// `hint` biases whisper toward words we expect (the pet's name).
 pub fn transcribe(
@@ -129,6 +139,7 @@ pub fn transcribe(
     samples: &[f32],
     language: &str,
     hint: Option<&str>,
+    threads: usize,
 ) -> Result<String, String> {
     // Whisper needs at least a second of audio.
     let mut padded = samples.to_vec();
@@ -143,8 +154,7 @@ pub fn transcribe(
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
     params.set_print_special(false);
-    let threads = thread::available_parallelism().map_or(4, |n| n.get().min(8));
-    params.set_n_threads(threads as _);
+    params.set_n_threads(i32::try_from(threads.max(1)).unwrap_or(1));
     state.full(params, &padded).map_err(|e| e.to_string())?;
     let text: Vec<String> = (0..state.full_n_segments())
         .filter_map(|i| state.get_segment(i))

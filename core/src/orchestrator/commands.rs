@@ -17,11 +17,28 @@ impl Orchestrator {
             Command::OpenProject { root } => self.open_project(root).await,
             Command::FocusProject(id) => self.focus_project(id),
             Command::CloseProject(id) => self.close_project(id),
-            Command::CreateGroup { name, goal } => self.create_group(&name, &goal),
+            Command::CreateGroup { name, goal } => {
+                self.ensure_project().await;
+                self.create_group(&name, &goal);
+            }
             Command::CreateAgent { group, name, provider, task, persona } => {
+                self.ensure_project().await;
+                self.ensure_workspace_group(&group);
                 self.create_agent(&group, &name, provider.as_deref(), &task, &persona);
             }
             Command::SetPersona { agent, persona } => self.set_persona(agent, &persona),
+            Command::SetColor { agent, color } => {
+                let Some(target) = self.agent_mut(agent) else { return };
+                target.color = color;
+                let snapshot = target.clone();
+                if let Some(store) = &self.store {
+                    store.save_agent(&snapshot);
+                }
+                self.dirty = true;
+            }
+            Command::SetModel { agent, model } => self.set_model(agent, model.trim()),
+            Command::ProbeModels(agent) => self.probe_models(agent),
+            Command::SetFallback(text) => self.set_fallback(&text),
             Command::StartAgent(id) => self.start(id, None),
             Command::StopAgent(id) => self.stop_agent(id),
             Command::RemoveAgent(id) => self.remove_agent(id),

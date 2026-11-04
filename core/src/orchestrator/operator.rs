@@ -40,9 +40,13 @@ impl Orchestrator {
                 Some(id) => self.message(id, &text),
                 None => missing(self, &agent),
             },
-            HostAction::CreateGroup { name, goal } => self.create_group(&name, &goal),
+            // Through the command path: with no project open they need the workspace.
+            HostAction::CreateGroup { name, goal } => {
+                let _ = self.inbox.send(Internal::Run(Command::CreateGroup { name, goal }));
+            }
             HostAction::CreateAgent { group, name, provider, task, persona } => {
-                self.create_agent(&group, &name, provider.as_deref(), &task, &persona);
+                let command = Command::CreateAgent { group, name, provider, task, persona };
+                let _ = self.inbox.send(Internal::Run(command));
             }
             HostAction::Start { agent } => match self.find_agent(None, &agent) {
                 Some(id) => self.start(id, None),

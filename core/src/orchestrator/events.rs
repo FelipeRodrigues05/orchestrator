@@ -125,6 +125,7 @@ impl Orchestrator {
                 self.notice(LogLevel::Error, format!("voice install failed: {error}"));
             }
             Internal::Team(request) => self.team_request(request),
+            Internal::Repositories(found) => self.state.repositories = found,
             Internal::Notice(text, level) => {
                 if text.is_empty() {
                     self.refresh_providers();

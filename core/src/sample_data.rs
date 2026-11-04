@@ -36,6 +36,9 @@ pub fn sample_state() -> AppState {
         started_at: running_secs.map(|secs| now - Duration::seconds(secs)),
         usage: Default::default(),
         persona: String::new(),
+        model: None,
+        models: Vec::new(),
+        color: None,
     };
     let backend =
         agent(&api, "Backend", "implement the /pix handler", "claude-code-acp", AgentState::Running, Some(7 * 60 + 14));

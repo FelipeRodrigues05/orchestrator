@@ -6,6 +6,8 @@ struct Room {
     commands: async_channel::Sender<Command>,
     events: async_channel::Receiver<Event>,
     repo: tempfile::TempDir,
+    /// Holds the personal workspace of this test.
+    home: tempfile::TempDir,
     /// Last snapshot seen, checked first: one snapshot may satisfy several waits.
     last: std::cell::RefCell<Option<AppState>>,
 }
@@ -23,6 +25,7 @@ fn git_repo() -> tempfile::TempDir {
 }
 
 fn room() -> Room {
+    let home = tempfile::tempdir().unwrap();
     let config = Config {
         store: None,
         voice: false,
@@ -38,11 +41,12 @@ fn room() -> Room {
             })
             .collect(),
         sandbox: false,
+        workspace: home.path().join("personal"),
     };
     let (commands, rx) = async_channel::unbounded();
     let (tx, events) = async_channel::unbounded();
     tokio::spawn(run_with(config, rx, tx));
-    Room { commands, events, repo: git_repo(), last: Default::default() }
+    Room { commands, events, repo: git_repo(), home, last: Default::default() }
 }
 
 impl Room {
@@ -279,4 +283,98 @@ async fn the_briefing_names_the_persona_and_the_team() {
     assert!(briefing.contains("Who you are: only writes tests"), "{briefing}");
     assert!(briefing.contains("- Backend (group API, Stopped): Backend specialist"), "{briefing}");
     assert!(briefing.contains("ask_agent"), "{briefing}");
+}
+
+#[tokio::test]
+async fn agents_need_no_project_open() {
+    let room = room();
+    room.until(|s| s.projects.is_empty()).await;
+    room.send(Command::CreateAgent {
+        group: "Personal".into(),
+        name: "Mia".into(),
+        provider: Some("fake".into()),
+        task: "plan the launch campaign".into(),
+        persona: "marketing specialist".into(),
+    })
+    .await;
+    let state = room.until(|s| s.agents.len() == 1).await;
+    let workspace = std::fs::canonicalize(room.home.path().join("personal")).unwrap();
+    assert_eq!(state.project().map(|p| p.root.clone()), Some(workspace.clone()));
+    assert_eq!(state.groups[0].name, "Personal");
+    assert!(workspace.join(".git").exists());
+
+    // The agent runs like any other, in a worktree of the workspace.
+    let mia = state.agents[0].id;
+    room.send(Command::Message { agent: mia, text: "hello".into() }).await;
+    let state = room.until(|s| agent_lines(s, mia).iter().any(|l| l.starts_with("echo:"))).await;
+    assert!(state.agents[0].worktree.starts_with(&workspace));
+}
+
+#[tokio::test]
+async fn the_model_switches_within_the_provider() {
+    let room = room();
+    let state = room.staffed().await;
+    let tests = state.agents.iter().find(|a| a.name == "Tests").unwrap().id;
+    room.send(Command::StartAgent(tests)).await;
+    // The CLI reports what it offers.
+    room.until(|s| s.agent(tests).is_some_and(|a| a.models == ["fake-1", "fake-2"])).await;
+    room.send(Command::SetModel { agent: tests, model: "fake-2".into() }).await;
+    let state = room.until(|s| s.agent(tests).is_some_and(|a| a.model.as_deref() == Some("fake-2"))).await;
+    assert!(agent_lines(&state, tests).iter().any(|l| l.contains("model: fake-1 → fake-2")));
+
+    // Another provider: the model and the list of the old one go away.
+    room.send(Command::SetProvider { agent: tests, provider: "fake2".into() }).await;
+    room.until(|s| s.agent(tests).is_some_and(|a| a.provider == Provider::CliAcp { command: "fake2".into() })).await;
+    room.until(|s| {
+        s.agent(tests).is_some_and(|a| a.models == ["fake-1", "fake-2"] && a.model.as_deref() == Some("fake-1"))
+    })
+    .await;
+    room.send(Command::SetModel { agent: tests, model: "fake-2".into() }).await;
+    room.until(|s| s.agent(tests).is_some_and(|a| a.model.as_deref() == Some("fake-2"))).await;
+
+    // A model the CLI does not offer is refused.
+    room.send(Command::SetModel { agent: tests, model: "gpt-9".into() }).await;
+    room.until(|s| s.log.iter().any(|e| e.text.contains("does not offer gpt-9"))).await;
+}
+
+#[tokio::test]
+async fn a_usage_limit_moves_the_agent_to_the_closest_model() {
+    let room = room();
+    let state = room.staffed().await;
+    let tests = state.agents.iter().find(|a| a.name == "Tests").unwrap().id;
+    room.send(Command::Message { agent: tests, text: "write the refund tests".into() }).await;
+    room.until(|s| agent_lines(s, tests).iter().any(|l| l.starts_with("echo:"))).await;
+
+    room.send(Command::Message { agent: tests, text: "limit:".into() }).await;
+    let state = room
+        .until(|s| s.agent(tests).is_some_and(|a| a.provider == Provider::CliAcp { command: "fake2".into() }))
+        .await;
+    assert!(
+        agent_lines(&state, tests).iter().any(|l| l.contains("limit reached on fake/fake-1 → going on with fake2"))
+    );
+    // It goes on by itself, with the conversation handed over.
+    let state = room.until(|s| agent_lines(s, tests).iter().any(|l| l.contains("taking over this task"))).await;
+    assert!(agent_lines(&state, tests).join("\n").contains("write the refund tests"));
+}
+
+#[tokio::test]
+async fn a_model_the_cli_cannot_run_is_replaced_within_the_same_cli() {
+    let room = room();
+    let state = room.staffed().await;
+    let tests = state.agents.iter().find(|a| a.name == "Tests").unwrap().id;
+    room.send(Command::StartAgent(tests)).await;
+    room.until(|s| s.agent(tests).is_some_and(|a| a.models.len() == 2)).await;
+    room.send(Command::Message { agent: tests, text: "nomodel:".into() }).await;
+    let state = room
+        .until(|s| {
+            s.agent(tests).is_some_and(|a| {
+                a.provider == Provider::CliAcp { command: "fake".into() } && a.model.as_deref() == Some("fake-2")
+            })
+        })
+        .await;
+    let lines = agent_lines(&state, tests);
+    // The error reads as a sentence, and no update was attempted.
+    assert!(lines.iter().any(|l| l == "The 'fake-1' model requires a newer version of Codex."), "{lines:?}");
+    assert!(lines.iter().any(|l| l.contains("fake/fake-1 cannot run here → going on with fake/fake-2")));
+    assert!(!lines.iter().any(|l| l.contains("updating")));
 }

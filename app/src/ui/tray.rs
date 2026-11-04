@@ -215,6 +215,11 @@ pub fn install(
             }
         }
     });
+    // Leave the bus cleanly when the app quits, so hosts drop the item.
+    app.connect_shutdown({
+        let handle = handle.clone();
+        move |_| handle.shutdown().wait()
+    });
     Some(Rc::new(TrayIcon {
         handle,
         summary: RefCell::new(Summary::default()),

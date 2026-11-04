@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use super::{AgentCmd, Internal, Orchestrator};
 use crate::{
-    model::{Agent, AgentState, LogLevel},
+    model::{Agent, AgentState, LogLevel, Provider},
+    router::{self, Candidate},
     runner::{AgentEvent, AgentRunner, RunnerContext, ToolStatus, update},
     voice::{Priority, phrases::Phrase},
     worktree,
@@ -137,13 +138,125 @@ impl Orchestrator {
             .collect();
         let recent = &lines[lines.len().saturating_sub(60)..];
         Some(format!(
-            "Group goal: {}\n\nYour task: {}\n\nYou are taking over this task from another model ({previous}). \
+            "{}\n\nYou are taking over this task from another model ({previous}). \
              The working directory already holds its changes; check them before going on. \
              The conversation so far:\n{}\n\nContinue from where it stopped.",
-            group.goal,
-            agent.task,
+            self.briefing(agent, group),
             recent.join("\n")
         ))
+    }
+
+    /// Fills `Agent::models` from the provider: Claude Code's aliases, the models of a
+    /// local Ollama, or a short ACP session that only lists them (no task, no cost).
+    pub(super) fn probe_models(&mut self, id: Uuid) {
+        let Some(agent) = self.state.agent(id).cloned() else { return };
+        if self.running.contains_key(&id) && !agent.models.is_empty() {
+            return;
+        }
+        let inbox = self.inbox.clone();
+        let reply = move |event: AgentEvent| {
+            let _ = inbox.send(Internal::Agent { id, event });
+        };
+        match agent.provider {
+            Provider::CliMcp { .. } => {
+                let available = crate::runner::mcp_cli::CLAUDE_MODELS.map(str::to_owned).to_vec();
+                reply(AgentEvent::Models { current: None, available });
+            }
+            Provider::CliAcp { command } => {
+                // Its worktree when it has one, else the project: a CLI may list models per folder.
+                let cwd = Some(agent.worktree.clone())
+                    .filter(|w| w.is_dir())
+                    .or_else(|| self.state.project_of_agent(id).map(|p| p.root.clone()))
+                    .unwrap_or_else(std::env::temp_dir);
+                self.log(Some(id), LogLevel::Info, "asking its CLI which models it offers…");
+                tokio::spawn(async move {
+                    match crate::runner::acp::probe_models(&command, &cwd).await {
+                        Ok((_, available)) => reply(AgentEvent::Models { current: None, available }),
+                        Err(error) => reply(AgentEvent::Notice(format!("no model list: {error}"))),
+                    }
+                });
+            }
+            Provider::Local { url, .. } => {
+                tokio::spawn(async move {
+                    let available: Vec<String> = crate::discovery::ollama_models(&url)
+                        .await
+                        .into_iter()
+                        .filter_map(|option| match option.provider {
+                            Provider::Local { model, .. } => Some(model),
+                            _ => None,
+                        })
+                        .collect();
+                    reply(AgentEvent::Models { current: None, available });
+                });
+            }
+            Provider::Api { .. } => {
+                let text = "this API's models are not listed yet: type the model id (e.g. claude-opus-5-5)";
+                self.log(Some(id), LogLevel::Info, text);
+            }
+        }
+    }
+
+    /// The agent's provider (and model) as the router names them.
+    pub(super) fn candidate_of(&self, agent: &Agent) -> Option<Candidate> {
+        let option = self.state.providers.iter().find(|o| match (&o.provider, &agent.provider) {
+            // An API or local provider is the same whatever model it runs.
+            (Provider::Api { service: a, .. }, Provider::Api { service: b, .. })
+            | (Provider::Local { url: a, .. }, Provider::Local { url: b, .. }) => a == b,
+            (a, b) => a == b,
+        })?;
+        let model = match agent.provider {
+            Provider::CliAcp { .. } | Provider::CliMcp { .. } => agent.model.clone(),
+            Provider::Api { .. } | Provider::Local { .. } => None,
+        };
+        Some(Candidate { label: option.label.clone(), provider: agent.provider.clone(), model })
+    }
+
+    /// The agent hit its usage limit, or its CLI cannot run the model: set that
+    /// model aside and go on with the closest one available, conversation included
+    /// (ADR 0020). A model the CLI cannot run is replaced within the same CLI first.
+    pub(super) fn fall_back(&mut self, id: Uuid, reason: Reason) {
+        let Some(agent) = self.state.agent(id).cloned() else { return };
+        let Some(current) = self.candidate_of(&agent) else {
+            self.notice(LogLevel::Warn, format!("{} hit a limit on a provider the app does not list", agent.name));
+            return;
+        };
+        self.router.exhaust(&current);
+        let next = match reason {
+            Reason::Limit => self.router.next(&current, &self.state.providers),
+            Reason::UnsupportedModel => self.router.next_model(&current, &self.state.providers),
+        };
+        let what = match reason {
+            Reason::Limit => "hit its limit",
+            Reason::UnsupportedModel => "cannot run on this CLI",
+        };
+        let Some(next) = next else {
+            self.notice(
+                LogLevel::Error,
+                format!("{}: {} {what} and no other model is available", agent.name, current.name()),
+            );
+            return;
+        };
+        let (from, to) = (current.name(), next.name());
+        if let Some(target) = self.agent_mut(id) {
+            target.provider = next.provider;
+            target.model = next.model;
+            target.models.clear();
+            let snapshot = target.clone();
+            if let Some(store) = &self.store {
+                store.save_agent(&snapshot);
+            }
+        }
+        self.auto_updated.remove(&id);
+        let line = match reason {
+            Reason::Limit => format!("limit reached on {from} → going on with {to}"),
+            Reason::UnsupportedModel => format!("{from} cannot run here → going on with {to}"),
+        };
+        self.log(Some(id), LogLevel::Warn, &line);
+        self.notice(LogLevel::Warn, format!("{}: {from} {what}; continuing on {to}", agent.name));
+        self.announce(Priority::Error, Phrase::FellBack { agent: agent.name.clone(), to: to.clone() });
+        if let Some(prompt) = self.handoff(id, &from) {
+            self.restart_with(id, prompt);
+        }
     }
 
     pub(super) fn set_provider(&mut self, id: Uuid, wanted: &str) {
@@ -152,6 +265,12 @@ impl Orchestrator {
             self.notice(LogLevel::Warn, format!("unknown provider {wanted}; available: {}", labels.join(", ")));
             return;
         };
+        self.switch_provider(id, provider);
+    }
+
+    /// Puts the agent on `provider`; a running agent restarts there with a summary
+    /// of its conversation.
+    fn switch_provider(&mut self, id: Uuid, provider: Provider) {
         let Some(agent) = self.agent_mut(id) else {
             return;
         };
@@ -159,7 +278,18 @@ impl Orchestrator {
             return;
         }
         let previous = agent.provider.short_name().to_owned();
+        // The model and the list belong to the provider left behind.
+        let same_cli = std::mem::discriminant(&agent.provider) == std::mem::discriminant(&provider)
+            && matches!(provider, Provider::Api { .. } | Provider::Local { .. });
         agent.provider = provider;
+        if !same_cli {
+            agent.model = None;
+            // Claude Code's aliases are known before it runs; other CLIs report theirs.
+            agent.models = match agent.provider {
+                Provider::CliMcp { .. } => crate::runner::mcp_cli::CLAUDE_MODELS.map(str::to_owned).to_vec(),
+                _ => Vec::new(),
+            };
+        }
         let (name, next) = (agent.name.clone(), agent.provider.short_name().to_owned());
         let snapshot = agent.clone();
         if let Some(store) = &self.store {
@@ -174,6 +304,58 @@ impl Orchestrator {
             self.notice(LogLevel::Info, format!("{name} continues on {next}"));
         } else {
             self.notice(LogLevel::Info, format!("{name} will run on {next}"));
+        }
+    }
+
+    /// Another model of the same provider: in the live session for ACP CLIs, by a
+    /// restart that keeps the conversation for Claude Code, or in the provider for
+    /// API and local models.
+    pub(super) fn set_model(&mut self, id: Uuid, model: &str) {
+        let Some(agent) = self.state.agent(id).cloned() else { return };
+        if model.is_empty() {
+            self.notice(LogLevel::Warn, "usage: :model <id> · the palette lists what the agent offers");
+            return;
+        }
+        match agent.provider {
+            Provider::Api { service, key_ref, .. } => {
+                self.switch_provider(id, Provider::Api { service, model: model.into(), key_ref });
+                return;
+            }
+            Provider::Local { url, .. } => {
+                self.switch_provider(id, Provider::Local { url, model: model.into() });
+                return;
+            }
+            Provider::CliAcp { .. } | Provider::CliMcp { .. } => {}
+        }
+        if !agent.models.is_empty() && !agent.models.iter().any(|m| m == model) {
+            self.notice(
+                LogLevel::Warn,
+                format!("{} does not offer {model}; it offers {}", agent.name, agent.models.join(", ")),
+            );
+            return;
+        }
+        let previous = agent.model.clone().unwrap_or_else(|| "its default".into());
+        if let Some(target) = self.agent_mut(id) {
+            target.model = Some(model.to_owned());
+            let snapshot = target.clone();
+            if let Some(store) = &self.store {
+                store.save_agent(&snapshot);
+            }
+        }
+        self.log(Some(id), LogLevel::Info, &format!("model: {previous} → {model}"));
+        let running = self.running.get(&id).cloned();
+        match (running, &agent.provider) {
+            (Some(runner), Provider::CliAcp { .. }) => {
+                let _ = runner.send(AgentCmd::SetModel(model.to_owned()));
+                self.notice(LogLevel::Info, format!("{} uses {model} from its next message", agent.name));
+            }
+            (Some(_), _) => {
+                if let Some(prompt) = self.handoff(id, &previous) {
+                    self.restart_with(id, prompt);
+                }
+                self.notice(LogLevel::Info, format!("{} continues on {model}", agent.name));
+            }
+            (None, _) => self.notice(LogLevel::Info, format!("{} will use {model}", agent.name)),
         }
     }
 
@@ -210,6 +392,22 @@ impl Orchestrator {
                 self.output(id, &text);
             }
             AgentEvent::Thought(_) => {}
+            AgentEvent::Models { current, available } => {
+                if let Some(label) = self.state.agent(id).and_then(|a| self.candidate_of(a)).map(|c| c.label) {
+                    self.router.learn_models(&label, available.clone());
+                }
+                if let Some(agent) = self.agent_mut(id) {
+                    agent.models = available;
+                    if let Some(current) = current
+                        && agent.model.as_deref() != Some(current.as_str())
+                    {
+                        let line = format!("model: {current}");
+                        agent.model = Some(current);
+                        self.log(Some(id), LogLevel::Info, &line);
+                    }
+                }
+            }
+            AgentEvent::Notice(text) => self.log(Some(id), LogLevel::Warn, &text),
             AgentEvent::Usage(usage) => {
                 if let Some(agent) = self.agent_mut(id) {
                     agent.usage += usage;
@@ -238,7 +436,17 @@ impl Orchestrator {
                     agent.state = AgentState::Error;
                 }
                 self.turns_lost(id, "hit an error");
-                self.log(Some(id), LogLevel::Error, &error);
+                self.log(Some(id), LogLevel::Error, &router::readable_error(&error));
+                // A model the CLI cannot run is not fixed by updating the CLI: an
+                // adapter can lag behind the model the account defaults to.
+                if router::is_unsupported_model(&error) {
+                    self.fall_back(id, Reason::UnsupportedModel);
+                    return;
+                }
+                if router::is_limit(&error) {
+                    self.fall_back(id, Reason::Limit);
+                    return;
+                }
                 if update::looks_outdated(&error) {
                     let provider = self.state.agent(id).map(|a| a.provider.clone());
                     match provider.as_ref().and_then(update::plan) {
@@ -315,6 +523,11 @@ async fn agent_actor(
                         let _ = inbox.send(Internal::Agent { id, event: AgentEvent::Error(error) });
                     }
                 }
+                Some(AgentCmd::SetModel(model)) => {
+                    if let Err(error) = runner.set_model(&model).await {
+                        let _ = inbox.send(Internal::Agent { id, event: AgentEvent::Notice(error) });
+                    }
+                }
                 Some(AgentCmd::Stop) | None => {
                     let _ = runner.stop().await;
                     break;
@@ -329,4 +542,13 @@ async fn agent_actor(
         }
     }
     let _ = inbox.send(Internal::Agent { id, event: AgentEvent::Exited });
+}
+
+/// Why an agent leaves its model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Reason {
+    /// Out of tokens, quota or rate.
+    Limit,
+    /// The CLI cannot run the model (an adapter older than the model, say).
+    UnsupportedModel,
 }

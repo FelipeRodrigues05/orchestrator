@@ -7,6 +7,7 @@ pub mod mcp;
 pub mod model;
 pub mod orchestrator;
 pub mod persistence;
+pub mod router;
 pub mod runner;
 pub mod runtime;
 pub mod sample_data;

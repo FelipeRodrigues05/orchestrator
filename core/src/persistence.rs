@@ -35,13 +35,31 @@ pub struct HistoryEntry {
 enum Op {
     SaveProject(Project),
     SaveGroup(Group),
-    SaveAgent(Agent),
+    SaveAgent(Box<Agent>),
     DeleteAgent(Uuid),
-    SaveLayout { project: Uuid, layout: String },
+    SaveLayout {
+        project: Uuid,
+        layout: String,
+    },
     History(HistoryEntry),
-    SetSetting { key: String, value: String },
-    Setting { key: String, reply: oneshot::Sender<Option<String>> },
-    Load { root: PathBuf, reply: oneshot::Sender<Option<LoadedProject>> },
+    SetSetting {
+        key: String,
+        value: String,
+    },
+    Setting {
+        key: String,
+        reply: oneshot::Sender<Option<String>>,
+    },
+    Load {
+        root: PathBuf,
+        reply: oneshot::Sender<Option<LoadedProject>>,
+    },
+    /// The project was opened now (for the recent list).
+    Opened(Uuid),
+    Recent {
+        limit: usize,
+        reply: oneshot::Sender<Vec<PathBuf>>,
+    },
 }
 
 #[derive(Clone)]
@@ -88,7 +106,7 @@ impl Store {
     }
 
     pub fn save_agent(&self, agent: &Agent) {
-        self.send(Op::SaveAgent(agent.clone()));
+        self.send(Op::SaveAgent(Box::new(agent.clone())));
     }
 
     pub fn delete_agent(&self, id: Uuid) {
@@ -113,6 +131,17 @@ impl Store {
         value.await.ok().flatten()
     }
 
+    pub fn opened(&self, project: Uuid) {
+        self.send(Op::Opened(project));
+    }
+
+    /// Roots of the projects opened most recently, newest first.
+    pub async fn recent(&self, limit: usize) -> Vec<PathBuf> {
+        let (reply, roots) = oneshot::channel();
+        self.send(Op::Recent { limit, reply });
+        roots.await.unwrap_or_default()
+    }
+
     pub async fn load(&self, root: &Path) -> Option<LoadedProject> {
         let (reply, project) = oneshot::channel();
         self.send(Op::Load { root: root.to_path_buf(), reply });
@@ -125,6 +154,9 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
     // Columns added after the first release; the error just means it exists.
     let _ = connection.execute("ALTER TABLE groups ADD COLUMN max_active INTEGER", []);
     let _ = connection.execute("ALTER TABLE agents ADD COLUMN persona TEXT NOT NULL DEFAULT ''", []);
+    let _ = connection.execute("ALTER TABLE projects ADD COLUMN opened_at INTEGER NOT NULL DEFAULT 0", []);
+    let _ = connection.execute("ALTER TABLE agents ADD COLUMN model TEXT", []);
+    let _ = connection.execute("ALTER TABLE agents ADD COLUMN color TEXT", []);
     Ok(())
 }
 
@@ -178,11 +210,11 @@ fn apply(db: &Connection, op: Op) -> rusqlite::Result<()> {
         }
         Op::SaveAgent(a) => {
             db.execute(
-                "INSERT INTO agents (id, group_id, name, task, provider, worktree, rules, persona, position)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, (SELECT COUNT(*) FROM agents))
+                "INSERT INTO agents (id, group_id, name, task, provider, worktree, rules, persona, model, color, position)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, (SELECT COUNT(*) FROM agents))
                  ON CONFLICT(id) DO UPDATE SET group_id = excluded.group_id, name = excluded.name,
                      task = excluded.task, provider = excluded.provider, rules = excluded.rules,
-                     persona = excluded.persona",
+                     persona = excluded.persona, model = excluded.model, color = excluded.color",
                 params![
                     a.id.to_string(),
                     a.group_id.to_string(),
@@ -191,7 +223,9 @@ fn apply(db: &Connection, op: Op) -> rusqlite::Result<()> {
                     json(&a.provider),
                     a.worktree.to_string_lossy(),
                     json(&a.rules),
-                    a.persona
+                    a.persona,
+                    a.model,
+                    a.color
                 ],
             )?;
         }
@@ -222,6 +256,18 @@ fn apply(db: &Connection, op: Op) -> rusqlite::Result<()> {
         }
         Op::Load { root, reply } => {
             let _ = reply.send(load(db, &root)?);
+        }
+        Op::Opened(project) => {
+            db.execute("UPDATE projects SET opened_at = unixepoch() WHERE id = ?1", params![project.to_string()])?;
+        }
+        Op::Recent { limit, reply } => {
+            let mut statement = db.prepare("SELECT root FROM projects ORDER BY opened_at DESC, rowid DESC LIMIT ?1")?;
+            let roots = statement
+                .query_map(params![i64::try_from(limit).unwrap_or(i64::MAX)], |row| row.get::<_, String>(0))?
+                .filter_map(Result::ok)
+                .map(PathBuf::from)
+                .collect();
+            let _ = reply.send(roots);
         }
     }
     Ok(())
@@ -270,7 +316,7 @@ fn load(db: &Connection, root: &Path) -> rusqlite::Result<Option<LoadedProject>>
 
     let mut agents = Vec::new();
     let mut statement = db.prepare(
-        "SELECT id, group_id, name, task, provider, worktree, rules, persona FROM agents
+        "SELECT id, group_id, name, task, provider, worktree, rules, persona, model, color FROM agents
          WHERE group_id = ?1 ORDER BY position, rowid",
     )?;
     for group in &groups {
@@ -290,6 +336,9 @@ fn load(db: &Connection, root: &Path) -> rusqlite::Result<Option<LoadedProject>>
                 started_at: None,
                 usage: Default::default(),
                 persona: row.get(7)?,
+                model: row.get(8)?,
+                models: Vec::new(),
+                color: row.get(9)?,
             })
         })?;
         for agent in rows {
@@ -334,6 +383,9 @@ mod tests {
             started_at: None,
             usage: Default::default(),
             persona: String::new(),
+            model: Some("opus".into()),
+            models: Vec::new(),
+            color: None,
         };
         {
             let store = Store::open(&path).unwrap();
@@ -352,6 +404,7 @@ mod tests {
         assert_eq!(loaded.agents.len(), 1);
         assert_eq!(loaded.agents[0].state, AgentState::Stopped);
         assert_eq!(loaded.agents[0].provider, agent.provider);
+        assert_eq!(loaded.agents[0].model.as_deref(), Some("opus"));
         assert_eq!(loaded.layout.as_deref(), Some("{\"view\":\"log\"}"));
     }
 }

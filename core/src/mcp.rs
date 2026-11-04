@@ -264,7 +264,7 @@ mod tests {
         let mcp = spawn().await.unwrap();
         let (tx, _rx) = mpsc::unbounded_channel();
         let broker = broker::spawn(Duration::from_secs(5), tx, None);
-        let agent = AgentInfo { id: Uuid::new_v4(), name: "Tests".into(), worktree: "/tmp/w".into() };
+        let agent = AgentInfo { id: Uuid::new_v4(), name: "Tests".into(), worktree: "/tmp/w".into(), model: None };
         broker.set_rules(
             RuleScope::Agent(agent.id),
             vec![
@@ -328,7 +328,7 @@ mod tests {
                 }
             }
         });
-        let agent = AgentInfo { id: Uuid::new_v4(), name: "Back".into(), worktree: "/tmp/w".into() };
+        let agent = AgentInfo { id: Uuid::new_v4(), name: "Back".into(), worktree: "/tmp/w".into(), model: None };
         let context = RunnerContext {
             broker,
             group_id: Uuid::new_v4(),

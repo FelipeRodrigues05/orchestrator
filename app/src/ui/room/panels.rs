@@ -8,13 +8,14 @@ use orch_core::{
 };
 
 use super::format::{
-    clock, display_order, format_tokens, lamp_for, level_style, sparkline, state_label, uptime,
+    agent_style, clock, display_order, format_tokens, lamp_for, level_style, sparkline,
+    state_label, uptime,
 };
 use super::{
-    ACCENT, Action, DIM, ERROR, FAINT, FRAME, OK, Prompt, Room, SPARK_WIDTH, Spans, TEXT, TITLE,
-    WARN, s, title, title_right,
+    ACCENT, Action, DIM, ERROR, FAINT, FRAME, OK, Pane, Prompt, Room, SPARK_WIDTH, Spans, TEXT,
+    TITLE, WARN, editor::Editor, markdown, s, title, title_right,
 };
-use crate::ui::grid::{Grid, Rect, fit};
+use crate::ui::grid::{Grid, Lines, Rect, Style, Weight, fit};
 
 impl Room {
     pub(super) fn draw_queue(
@@ -174,7 +175,7 @@ impl Room {
                     if selected {
                         ACCENT.bold().inverse()
                     } else {
-                        TEXT.bold()
+                        agent_style(agent).unwrap_or(TEXT).bold()
                     },
                 ),
                 s(" ", TEXT),
@@ -193,7 +194,13 @@ impl Room {
         }
     }
 
-    pub(super) fn draw_console(&self, grid: &mut Grid, area: Rect, sep: usize, state: &AppState) {
+    pub(super) fn draw_console(
+        &mut self,
+        grid: &mut Grid,
+        area: Rect,
+        sep: usize,
+        state: &AppState,
+    ) {
         let x = area.x + 1;
         let width = area.w.saturating_sub(2);
         let Some(agent) = self.selected.and_then(|id| state.agent(id)) else {
@@ -214,7 +221,10 @@ impl Room {
             sep,
             &[
                 s("AGENT // ", TITLE),
-                s(agent.name.to_uppercase(), ACCENT.bold()),
+                s(
+                    agent.name.to_uppercase(),
+                    agent_style(agent).unwrap_or(ACCENT).bold(),
+                ),
                 s(format!(" · {group}"), DIM),
             ],
         );
@@ -225,6 +235,14 @@ impl Room {
             sep,
             &[
                 s(agent.provider.short_name(), DIM),
+                s(
+                    agent
+                        .model
+                        .as_deref()
+                        .map(|m| format!(" · {m}"))
+                        .unwrap_or_default(),
+                    TEXT,
+                ),
                 s(" ═ ", FRAME),
                 s(format!("{glyph} {}", state_label(agent.state)), lamp.bold()),
             ],
@@ -259,9 +277,11 @@ impl Room {
             .filter(|e| e.agent_id == Some(agent.id))
             .collect();
         let output = Rect::new(area.x, area.y + 1, area.w, room);
-        draw_wrapped(grid, output, lines.iter().copied(), 11, |entry| {
-            vec![s(clock(entry.at), DIM), s(" > ", ACCENT)]
-        });
+        let rows = markdown::render(&lines, output.w.saturating_sub(2));
+        let mut scroll = self.console_scroll;
+        draw_rows(grid, output, &rows, &mut scroll);
+        self.console_scroll = scroll;
+        self.scroll_areas.push((output, Pane::Console));
         if lines.is_empty() && room > 0 {
             grid.text(x, area.y + 1, width, "no output yet", FAINT);
         }
@@ -372,6 +392,65 @@ impl Room {
         grid.spans(x, area.y + 1, width, &[s("heard> ", DIM), heard]);
     }
 
+    /// F6: the selected agent's conversation in a centred column of reading width,
+    /// Markdown rendered, scrolled like the console.
+    pub(super) fn draw_reader(&mut self, grid: &mut Grid, area: Rect, state: &AppState) {
+        let Some(agent) = self.selected.and_then(|id| state.agent(id)) else {
+            title(grid, 0, 2, &[s("READ", TITLE)]);
+            grid.text(
+                area.x + 2,
+                area.y + 1,
+                area.w,
+                "select an agent (j/k) to read its conversation",
+                DIM,
+            );
+            return;
+        };
+        let model = agent
+            .model
+            .as_deref()
+            .map(|m| format!(" · {m}"))
+            .unwrap_or_default();
+        title(
+            grid,
+            0,
+            2,
+            &[
+                s(format!("READ // {}", agent.name.to_uppercase()), TITLE),
+                s(format!(" · {}{model}", agent.provider.short_name()), DIM),
+            ],
+        );
+        title_right(
+            grid,
+            grid.cols - 2,
+            2,
+            &[s("PgUp PgDn wheel · End newest · 1 back", FAINT)],
+        );
+        // Lines of ~100 characters read best; wider screens get margins.
+        let width = area.w.min(104);
+        let column = Rect::new(area.x + (area.w - width) / 2, area.y, width, area.h);
+        let lines: Vec<&LogEntry> = state
+            .log
+            .iter()
+            .filter(|e| e.agent_id == Some(agent.id))
+            .collect();
+        if lines.is_empty() {
+            grid.text(
+                column.x + 1,
+                column.y + 1,
+                column.w,
+                "no conversation yet",
+                FAINT,
+            );
+            return;
+        }
+        let rows = markdown::render(&lines, column.w.saturating_sub(2));
+        let mut scroll = self.console_scroll;
+        draw_rows(grid, column, &rows, &mut scroll);
+        self.console_scroll = scroll;
+        self.scroll_areas.push((column, Pane::Console));
+    }
+
     pub(super) fn draw_command_line(&mut self, grid: &mut Grid) {
         let y = grid.rows - 1;
         let hints: Spans = vec![
@@ -396,26 +475,37 @@ impl Room {
             .and_then(|id| self.state.as_ref()?.agent(id))
             .map_or_else(|| "no agent".to_owned(), |a| a.name.clone());
         let mut spans = vec![s(" > ", ACCENT.bold())];
-        let shown = |text: &str, room: usize| -> String {
-            let skip = text.chars().count().saturating_sub(room);
-            text.chars().skip(skip).collect()
-        };
-        match (&self.prompt, &self.flash) {
-            (Some(Prompt::Text(text)), _) if text.starts_with(':') => {
-                spans.push(s(shown(text, width.saturating_sub(6)), ACCENT.bold()));
-                spans.push(s(cursor, ACCENT));
-            }
-            (Some(Prompt::Text(text)), _) => {
-                let pet = text.starts_with('@') || self.selected.is_none();
-                let label = if pet {
+        // Owned copies: drawing the editor panel needs `self` mutably.
+        let (prompt, flash) = (self.prompt.clone(), self.flash.clone());
+        match (&prompt, &flash) {
+            (Some(Prompt::Text(editor)), _) => {
+                let command = editor.text().starts_with(':');
+                let label = if command {
+                    String::new()
+                } else if editor.text().starts_with("@pet") || self.selected.is_none() {
                     format!("to {} (pet) › ", self.pet.name)
                 } else {
                     format!("to {target} › ")
                 };
                 let room = width.saturating_sub(label.chars().count() + 6);
-                spans.push(s(label, DIM));
-                spans.push(s(shown(text, room), TEXT.bold()));
-                spans.push(s(cursor, ACCENT));
+                // Too long for the line, or several lines: edit it in the panel above.
+                if editor.text().contains('\n') || editor.text().chars().count() >= room {
+                    self.draw_message_editor(grid, editor, &label);
+                    spans.push(s(label, DIM));
+                    spans.push(s(
+                        "editing above · Enter send · Shift+Enter new line · Esc cancel",
+                        FAINT,
+                    ));
+                } else {
+                    self.editor_width = room.max(1);
+                    let (_, column) = editor.position(usize::MAX);
+                    let text: Vec<char> = editor.text().chars().collect();
+                    let style = if command { ACCENT.bold() } else { TEXT.bold() };
+                    spans.push(s(label, DIM));
+                    spans.push(s(text[..column].iter().collect::<String>(), style));
+                    spans.push(s(cursor, ACCENT));
+                    spans.push(s(text[column..].iter().collect::<String>(), style));
+                }
             }
             (Some(Prompt::Secret { service, key }), _) => {
                 spans.push(s(format!("{service} API key › "), WARN));
@@ -434,6 +524,60 @@ impl Room {
             grid.text(x + used, y, width - used, &" ".repeat(width - used), TEXT);
         }
         self.hits.push((Rect::new(x, y, width, 1), Action::Prompt));
+    }
+
+    /// A long message: a box over the console with the whole text wrapped, the
+    /// cursor shown, and the view scrolled to keep it in sight.
+    fn draw_message_editor(&mut self, grid: &mut Grid, editor: &Editor, label: &str) {
+        let area_w = grid.cols.saturating_sub(4);
+        let width = area_w.saturating_sub(4).max(1);
+        self.editor_width = width;
+        let lines = editor.lines(width);
+        let (row, column) = editor.position(width);
+        let max_rows = (grid.rows / 2).max(3);
+        let rows = lines.len().clamp(3, max_rows);
+        let rect = Rect::new(2, grid.rows.saturating_sub(rows + 3), area_w, rows + 2);
+        grid.fill(rect, ' ', TEXT);
+        let mut frame = Lines::new(grid.cols, grid.rows);
+        frame.rect(rect, Weight::Double);
+        frame.draw(grid, ACCENT);
+        let lines_count = lines.len();
+        let to = label.trim_end_matches(" › ");
+        title(
+            grid,
+            rect.x,
+            rect.y,
+            &[
+                s(format!("MESSAGE {to}"), TITLE),
+                s(format!(" · {lines_count} lines"), DIM),
+            ],
+        );
+        title_right(
+            grid,
+            rect.right() - 2,
+            rect.bottom() - 1,
+            &[s(
+                "←→↑↓ Home End move · Shift+Enter new line · Enter send",
+                FAINT,
+            )],
+        );
+        let top = row.saturating_sub(rows - 1);
+        let cursor_on = self.blink();
+        for (index, (start, end)) in lines.iter().enumerate().skip(top).take(rows) {
+            let y = rect.y + 1 + index - top;
+            let x = rect.x + 2;
+            grid.text(x, y, width, &editor.text()[*start..*end], TEXT.bold());
+            if index == row {
+                let cell = grid.row(y).get(x + column).map_or(' ', |c| c.ch);
+                let style = if cursor_on {
+                    ACCENT.inverse()
+                } else {
+                    TEXT.bold().inverse()
+                };
+                grid.put(x + column, y, cell, style);
+            }
+        }
+        self.hits.push((rect, Action::Prompt));
     }
 }
 
@@ -460,60 +604,119 @@ pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
 }
 
 /// Draws entries newest at the bottom, each wrapped under its text column after a
-/// `prefix` of fixed width.
-pub(super) fn draw_wrapped<'a>(
-    grid: &mut Grid,
-    area: Rect,
-    entries: impl DoubleEndedIterator<Item = &'a LogEntry>,
-    prefix_width: usize,
-    prefix: impl Fn(&LogEntry) -> Spans,
-) {
-    let width = area.w.saturating_sub(2);
-    let text_width = width.saturating_sub(prefix_width);
-    let mut bottom = area.bottom();
-    for entry in entries.rev() {
-        if bottom <= area.y {
-            break;
-        }
-        let rows = wrap(&entry.text, text_width);
-        let first = bottom.saturating_sub(rows.len()).max(area.y);
-        let skip = rows.len().saturating_sub(bottom - first);
-        for (index, row) in rows.iter().enumerate().skip(skip) {
-            let y = first + index - skip;
-            let x = area.x + 1;
-            if index == 0 {
-                let used = grid.spans(x, y, width, &prefix(entry));
-                grid.text(x + used, y, text_width, row, level_style(entry.level));
-            } else {
-                grid.text(
-                    x + prefix_width,
-                    y,
-                    text_width,
-                    row,
-                    level_style(entry.level),
-                );
-            }
-        }
-        bottom = first;
+/// How far a log pane is scrolled up from its newest line, in shown rows.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct Scroll {
+    /// Rows hidden below the view; 0 follows new lines.
+    pub offset: usize,
+    /// Rows the pane had at the last frame, to hold the view still as lines arrive.
+    total: usize,
+}
+
+impl Scroll {
+    /// `delta` rows towards older lines (negative: towards newer ones).
+    pub fn by(&mut self, delta: isize) {
+        self.offset = self.offset.saturating_add_signed(delta);
     }
 }
 
-pub(super) fn draw_log(grid: &mut Grid, area: Rect, state: &AppState, pet: &str) {
-    draw_wrapped(grid, area, state.log.iter(), 20, |entry| {
-        let fallback = if entry.level == LogLevel::Pet {
-            pet
-        } else {
-            "runtime"
-        };
-        let source = entry
-            .agent_id
-            .and_then(|id| state.agent(id))
-            .map_or(fallback, |a| a.name.as_str());
-        vec![
-            s(clock(entry.at), DIM),
-            s(" ", TEXT),
-            s(fit(source, 9), ACCENT),
-            s(" ", TEXT),
-        ]
-    });
+/// Entries wrapped under their text column, newest at the bottom, scrolled by
+/// `scroll`; a `↓ n` mark says how many rows are below when scrolled.
+pub(super) fn draw_wrapped<'a>(
+    grid: &mut Grid,
+    area: Rect,
+    entries: impl Iterator<Item = &'a LogEntry>,
+    prefix_width: usize,
+    prefix: impl Fn(&LogEntry) -> Spans,
+    style: impl Fn(&LogEntry) -> Style,
+    scroll: &mut Scroll,
+) {
+    let text_width = area.w.saturating_sub(2).saturating_sub(prefix_width);
+    let rows: Vec<Spans> = entries
+        .flat_map(|entry| {
+            let style = style(entry);
+            let head = prefix(entry);
+            wrap(&entry.text, text_width)
+                .into_iter()
+                .enumerate()
+                .map(move |(index, row)| {
+                    let mut spans = if index == 0 {
+                        head.clone()
+                    } else {
+                        vec![s(" ".repeat(prefix_width), TEXT)]
+                    };
+                    spans.push(s(row, style));
+                    spans
+                })
+        })
+        .collect();
+    draw_rows(grid, area, &rows, scroll);
+}
+
+/// Rows newest at the bottom, scrolled by `scroll` (held still while rows arrive);
+/// a `↓ n · End` mark says how many rows are below when scrolled.
+pub(super) fn draw_rows(grid: &mut Grid, area: Rect, rows: &[Spans], scroll: &mut Scroll) {
+    let total = rows.len();
+    if scroll.offset > 0 && total > scroll.total {
+        // Reading older lines: new ones must not move the view.
+        scroll.offset += total - scroll.total;
+    }
+    scroll.total = total;
+    scroll.offset = scroll.offset.min(total.saturating_sub(area.h));
+    let end = total - scroll.offset;
+    let start = end.saturating_sub(area.h);
+    let top = area.bottom() - (end - start);
+    let width = area.w.saturating_sub(2);
+    for (y, row) in (top..).zip(&rows[start..end]) {
+        grid.spans(area.x + 1, y, width, row);
+    }
+    if scroll.offset > 0 && area.h > 0 {
+        let mark = format!(" ↓ {} · End ", scroll.offset);
+        let len = mark.chars().count();
+        let mark_x = area.right().saturating_sub(len + 1).max(area.x);
+        grid.text(
+            mark_x,
+            area.bottom() - 1,
+            len,
+            &mark,
+            ACCENT.bold().inverse(),
+        );
+    }
+}
+
+pub(super) fn draw_log(
+    grid: &mut Grid,
+    area: Rect,
+    state: &AppState,
+    pet: &str,
+    scroll: &mut Scroll,
+) {
+    draw_wrapped(
+        grid,
+        area,
+        state.log.iter(),
+        20,
+        |entry| {
+            let fallback = if entry.level == LogLevel::Pet {
+                pet
+            } else {
+                "runtime"
+            };
+            let agent = entry.agent_id.and_then(|id| state.agent(id));
+            let source = agent.map_or(fallback, |a| a.name.as_str());
+            let name_style = agent.and_then(agent_style).unwrap_or(ACCENT);
+            vec![
+                s(clock(entry.at), DIM),
+                s(" ", TEXT),
+                s(fit(source, 9), name_style.bold()),
+                s(" ", TEXT),
+            ]
+        },
+        // The whole line in the agent's colour; warnings and errors stay red.
+        |entry| match (entry.level, entry.agent_id.and_then(|id| state.agent(id))) {
+            (LogLevel::Warn | LogLevel::Error, _) | (_, None) => level_style(entry.level),
+            (_, Some(agent)) => agent_style(agent).unwrap_or_else(|| level_style(entry.level)),
+        },
+        scroll,
+    );
 }

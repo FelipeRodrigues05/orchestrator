@@ -59,9 +59,15 @@ pub fn plan(provider: &Provider) -> Option<Plan> {
     };
     let words = shell_words::split(command).ok()?;
     let program = words.first()?.rsplit('/').next()?.to_owned();
+    if program == "npx" {
+        // `npx -y @zed-industries/codex-acp` is the adapter, not npx.
+        let package = words.iter().skip(1).find(|w| !w.starts_with('-'))?;
+        let name = package.rsplit('/').next()?.split('@').next()?.to_owned();
+        let label = if name.is_empty() { package.clone() } else { name };
+        return Some(Plan { label, argv: None });
+    }
     let argv = |args: &[&str]| Some(args.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>());
     let argv = match program.as_str() {
-        "npx" => None,
         "opencode" => argv(&["opencode", "upgrade"]),
         "claude" => argv(&["claude", "update"]),
         "codex" => argv(&["codex", "update"]),
@@ -115,6 +121,8 @@ mod tests {
     #[test]
     fn npx_adapters_always_run_at_latest() {
         assert_eq!(latest_command("npx -y @zed-industries/codex-acp"), "npx -y @zed-industries/codex-acp@latest");
+        let plan = plan(&Provider::CliAcp { command: "npx -y @zed-industries/codex-acp@0.16.0".into() }).unwrap();
+        assert_eq!((plan.label.as_str(), plan.argv), ("codex-acp", None));
         assert_eq!(
             latest_command("npx -y @zed-industries/codex-acp@0.16.0"),
             "npx -y @zed-industries/codex-acp@0.16.0"

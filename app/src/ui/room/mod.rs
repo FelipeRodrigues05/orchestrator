@@ -6,15 +6,20 @@
 
 mod commands;
 mod compose;
+mod editor;
 mod format;
 mod input;
+mod markdown;
 mod modal;
 mod pages;
 mod panels;
 mod sector;
 
 pub(super) use commands::expand_home;
+pub(super) use format::AGENT_COLORS;
 
+use editor::Editor;
+use panels::Scroll;
 use std::{
     collections::HashSet,
     time::{Duration, Instant},
@@ -68,15 +73,18 @@ pub enum View {
     Permissions,
     Log,
     Providers,
+    /// The selected agent's conversation, full screen, easy to read.
+    Reader,
 }
 
 impl View {
-    pub(super) const ALL: [View; 5] = [
+    pub(super) const ALL: [View; 6] = [
         View::Overview,
         View::Agents,
         View::Permissions,
         View::Log,
         View::Providers,
+        View::Reader,
     ];
 
     pub(super) fn label(self) -> &'static str {
@@ -86,6 +94,7 @@ impl View {
             View::Permissions => "PERMS",
             View::Log => "LOG",
             View::Providers => "SETUP",
+            View::Reader => "READ",
         }
     }
 
@@ -96,6 +105,7 @@ impl View {
             View::Permissions => "perms",
             View::Log => "log",
             View::Providers => "setup",
+            View::Reader => "read",
         }
     }
 
@@ -106,6 +116,7 @@ impl View {
             "perms" | "permissions" | "f3" | "3" => Some(View::Permissions),
             "log" | "f4" | "4" => Some(View::Log),
             "setup" | "providers" | "f5" | "5" => Some(View::Providers),
+            "read" | "reader" | "f6" | "6" => Some(View::Reader),
             _ => None,
         }
     }
@@ -115,13 +126,25 @@ impl View {
 pub enum Key {
     Char(char),
     Enter,
+    /// Shift+Enter: a line break in a message.
+    NewLine,
     Escape,
     Backspace,
+    Delete,
     Up,
     Down,
+    Left,
+    Right,
+    Home,
+    End,
     Function(u8),
     /// Ctrl+P: the command palette.
     Palette,
+    /// PageUp/PageDown: the console; with Shift, the event log.
+    Page {
+        up: bool,
+        log: bool,
+    },
     /// Alt+1…9: the nth open project.
     Project(u8),
 }
@@ -164,7 +187,7 @@ struct Link {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Prompt {
     /// A message for agents, or a `:command`.
-    Text(String),
+    Text(Editor),
     /// An API key for `service`, shown masked.
     Secret { service: String, key: String },
 }
@@ -192,6 +215,22 @@ pub struct Room {
     float_pet: bool,
     /// The compositor offers layer-shell (KDE, Hyprland, Sway; not GNOME).
     can_float: bool,
+    /// The operator asked for the system's folder chooser; GTK opens it.
+    browse: bool,
+    /// Columns the message editor was last drawn with (for Home, End, ↑ ↓).
+    editor_width: usize,
+    /// The event log (overview and F4) and the selected agent's console.
+    log_scroll: Scroll,
+    console_scroll: Scroll,
+    /// Where the mouse wheel scrolls what, from the last frame.
+    scroll_areas: Vec<(Rect, Pane)>,
+}
+
+/// A pane that scrolls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    Log,
+    Console,
 }
 
 impl Room {
@@ -215,6 +254,11 @@ impl Room {
             deferred: HashSet::new(),
             float_pet: false,
             can_float: false,
+            browse: false,
+            editor_width: 80,
+            log_scroll: Scroll::default(),
+            console_scroll: Scroll::default(),
+            scroll_areas: Vec::new(),
         }
     }
 
@@ -330,6 +374,38 @@ impl Room {
             .find(|p| !self.deferred.contains(&p.id))
     }
 
+    /// The mouse wheel over a pane: `rows` towards older lines (negative: newer).
+    pub fn scroll(&mut self, col: usize, row: usize, rows: isize) {
+        let pane = self
+            .scroll_areas
+            .iter()
+            .rev()
+            .find(|(rect, _)| rect.contains(col, row))
+            .map(|(_, pane)| *pane);
+        match pane {
+            Some(Pane::Log) => self.log_scroll.by(rows),
+            Some(Pane::Console) => self.console_scroll.by(rows),
+            None => {}
+        }
+    }
+
+    /// Whether the folder chooser should open (asked once).
+    pub fn take_browse(&mut self) -> bool {
+        std::mem::take(&mut self.browse)
+    }
+
+    /// Where `@` mentions point: the selected agent's worktree, else the project.
+    fn mention_root(&self) -> Option<std::path::PathBuf> {
+        let state = self.state.as_ref()?;
+        let worktree = self
+            .selected
+            .and_then(|id| state.agent(id))
+            .map(|a| a.worktree.clone());
+        worktree
+            .filter(|w| w.is_dir())
+            .or_else(|| state.project().map(|p| p.root.clone()))
+    }
+
     pub fn send(&mut self, command: Command) {
         self.outbox.push(command);
     }
@@ -363,6 +439,7 @@ impl Room {
     fn select(&mut self, agent: Option<Uuid>) {
         if agent != self.selected {
             self.selected = agent;
+            self.console_scroll = Scroll::default();
             self.outbox.push(Command::Select(agent));
             self.save_layout();
         }

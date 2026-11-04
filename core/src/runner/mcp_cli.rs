@@ -48,6 +48,9 @@ impl McpCliRunner {
 }
 
 /// The arguments that make Claude Code ask our MCP tool before acting.
+/// Aliases Claude Code accepts for `--model`; any full model id works too.
+pub const CLAUDE_MODELS: [&str; 3] = ["opus", "sonnet", "haiku"];
+
 pub fn claude_args(mcp_url: &str) -> Vec<String> {
     let config = json!({ "mcpServers": { mcp::SERVER: { "type": "http", "url": mcp_url } } });
     [
@@ -86,6 +89,13 @@ impl AgentRunner for McpCliRunner {
         let (program, extra) = words.split_first().ok_or("empty command")?;
         let mut args = extra.to_vec();
         args.extend(claude_args(&url));
+        if let Some(model) = &agent.model {
+            args.extend(["--model".to_owned(), model.clone()]);
+        }
+        // Claude Code takes model aliases and full ids; these are the aliases.
+        let current = agent.model.clone();
+        let available = CLAUDE_MODELS.iter().map(|m| (*m).to_owned()).collect();
+        let _ = self.events_tx.send(AgentEvent::Models { current, available }).await;
         let (program, args) = if self.context.sandbox && crate::sandbox::available() {
             crate::sandbox::wrap(program, &args, &agent.worktree)
         } else {
@@ -302,6 +312,9 @@ mod smoke {
             started_at: None,
             usage: Default::default(),
             persona: String::new(),
+            model: None,
+            models: Vec::new(),
+            color: None,
         };
         let mut runner = McpCliRunner::new(context);
         runner.start(&agent, "").await.unwrap();

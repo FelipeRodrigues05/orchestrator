@@ -42,10 +42,17 @@ pub fn build_window(
     let flush: Flush = Rc::new({
         let room = room.clone();
         move || {
-            for command in room.borrow_mut().drain() {
+            let (queued, browse) = {
+                let mut room = room.borrow_mut();
+                (room.drain(), room.take_browse())
+            };
+            for command in queued {
                 if commands.try_send(command).is_err() {
                     tracing::warn!("runtime is not accepting commands");
                 }
+            }
+            if browse {
+                choose_project_folder(commands.clone());
             }
         }
     });
@@ -72,6 +79,9 @@ pub fn build_window(
 
     window.add_controller(key_controller(&room, &screen, &flush));
     screen.add_controller(click_controller(&room, &viewport, &flush));
+    for controller in wheel_controllers(&room, &viewport) {
+        screen.add_controller(controller);
+    }
     start_ticking(&room, &screen, &flush);
 
     // The wake word listens for this pet's name.
@@ -104,6 +114,26 @@ pub fn build_window(
             glib::Propagation::Proceed
         }
     });
+}
+
+/// The system's folder chooser; the folder picked opens as a project.
+fn choose_project_folder(commands: async_channel::Sender<Command>) {
+    let dialog = gtk::FileDialog::builder()
+        .title("Open project")
+        .modal(true)
+        .build();
+    dialog.select_folder(
+        None::<&gtk::Window>,
+        gtk::gio::Cancellable::NONE,
+        move |result| {
+            let Some(root) = result.ok().and_then(|folder| folder.path()) else {
+                return;
+            };
+            if commands.try_send(Command::OpenProject { root }).is_err() {
+                tracing::warn!("runtime is not accepting commands");
+            }
+        },
+    );
 }
 
 /// The drawing surface: the room composes a grid at every frame, `render` paints it.
@@ -197,6 +227,38 @@ fn click_controller(
         }
     });
     click
+}
+
+/// The mouse wheel scrolls the log or console under the pointer; a motion
+/// controller remembers where the pointer is.
+fn wheel_controllers(
+    room: &Shared<Room>,
+    viewport: &Rc<Cell<Viewport>>,
+) -> [gtk::EventController; 2] {
+    let pointer = Rc::new(Cell::new((0.0, 0.0)));
+    let motion = gtk::EventControllerMotion::new();
+    motion.connect_motion({
+        let pointer = pointer.clone();
+        move |_, x, y| pointer.set((x, y))
+    });
+    let wheel = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    wheel.connect_scroll({
+        let room = room.clone();
+        let viewport = viewport.clone();
+        move |controller, _, dy| {
+            let (x, y) = pointer.get();
+            if let Some((col, row)) = viewport.get().cell_at(x, y) {
+                // Three rows a notch; wheel up (negative dy) reads older lines.
+                let rows = (-dy * 3.0).round() as isize;
+                room.borrow_mut().scroll(col, row, rows);
+                if let Some(widget) = controller.widget() {
+                    widget.queue_draw();
+                }
+            }
+            glib::Propagation::Stop
+        }
+    });
+    [motion.upcast(), wheel.upcast()]
 }
 
 /// Animations, pings and blinking run on the room's tick.
@@ -314,7 +376,25 @@ fn desktop_editors() -> Vec<orch_core::model::Editor> {
 
 fn map_key(key: gdk::Key, modifiers: gdk::ModifierType, typing: bool) -> Option<Key> {
     let mapped = match key {
+        gdk::Key::Return | gdk::Key::KP_Enter
+            if modifiers.contains(gdk::ModifierType::SHIFT_MASK) =>
+        {
+            Key::NewLine
+        }
         gdk::Key::Return | gdk::Key::KP_Enter => Key::Enter,
+        gdk::Key::Left | gdk::Key::KP_Left => Key::Left,
+        gdk::Key::Right | gdk::Key::KP_Right => Key::Right,
+        gdk::Key::Home | gdk::Key::KP_Home => Key::Home,
+        gdk::Key::End | gdk::Key::KP_End => Key::End,
+        gdk::Key::Delete | gdk::Key::KP_Delete => Key::Delete,
+        gdk::Key::Page_Up | gdk::Key::KP_Page_Up => Key::Page {
+            up: true,
+            log: modifiers.contains(gdk::ModifierType::SHIFT_MASK),
+        },
+        gdk::Key::Page_Down | gdk::Key::KP_Page_Down => Key::Page {
+            up: false,
+            log: modifiers.contains(gdk::ModifierType::SHIFT_MASK),
+        },
         gdk::Key::Escape => Key::Escape,
         gdk::Key::BackSpace => Key::Backspace,
         gdk::Key::Up => Key::Up,
@@ -324,6 +404,7 @@ fn map_key(key: gdk::Key, modifiers: gdk::ModifierType, typing: bool) -> Option<
         gdk::Key::F3 => Key::Function(3),
         gdk::Key::F4 => Key::Function(4),
         gdk::Key::F5 => Key::Function(5),
+        gdk::Key::F6 => Key::Function(6),
         // Alt+1…9: open projects.
         key if modifiers.contains(gdk::ModifierType::ALT_MASK)
             && key.to_unicode().is_some_and(|c| ('1'..='9').contains(&c)) =>

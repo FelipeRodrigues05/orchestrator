@@ -1,4 +1,4 @@
-//! Wake word (opt-in, step 9): the microphone stays open, an energy VAD cuts it into
+//! Wake word (step 9, on when whisper `tiny` is installed): the microphone stays open, an energy VAD cuts it into
 //! utterances, and the voice actor checks each one for the pet's name ("ei KAI").
 
 use std::{
@@ -21,6 +21,8 @@ const ONSET_FRAMES: usize = 3;
 const HANGOVER_FRAMES: usize = 25;
 /// Longest utterance kept (8 s).
 const MAX_FRAMES: usize = 8_000 / 30;
+/// Shorter bursts of sound (a click, a key, a cough) are not speech: ~0.35 s.
+const MIN_SPEECH_FRAMES: usize = 12;
 
 /// Energy voice activity detector over 16 kHz mono frames.
 pub struct Vad {
@@ -29,11 +31,13 @@ pub struct Vad {
     quiet: usize,
     utterance: Vec<f32>,
     active: bool,
+    /// Frames above the threshold in the current utterance.
+    speech: usize,
 }
 
 impl Default for Vad {
     fn default() -> Self {
-        Self { noise: 0.005, voiced: 0, quiet: 0, utterance: Vec::new(), active: false }
+        Self { noise: 0.005, voiced: 0, quiet: 0, utterance: Vec::new(), active: false, speech: 0 }
     }
 }
 
@@ -61,11 +65,14 @@ impl Vad {
         }
         if self.active {
             self.utterance.extend_from_slice(frame);
+            self.speech += usize::from(speech);
             let frames = self.utterance.len() / FRAME;
             if self.quiet >= HANGOVER_FRAMES || frames >= MAX_FRAMES {
                 self.active = false;
                 self.voiced = 0;
-                return Some(std::mem::take(&mut self.utterance));
+                let utterance = std::mem::take(&mut self.utterance);
+                let spoken = std::mem::take(&mut self.speech) >= MIN_SPEECH_FRAMES;
+                return spoken.then_some(utterance);
             }
         }
         None
@@ -228,6 +235,16 @@ mod tests {
     }
 
     #[test]
+    fn short_bursts_are_not_speech() {
+        let mut vad = Vad::default();
+        let mut audio = tone(40, 0.001);
+        // A click: loud, but only a few frames.
+        audio.extend(tone(5, 0.4));
+        audio.extend(tone(60, 0.001));
+        assert!(audio.chunks(FRAME).all(|frame| vad.push(frame).is_none()));
+    }
+
+    #[test]
     fn silence_is_never_an_utterance() {
         let mut vad = Vad::default();
         assert!(tone(200, 0.002).chunks(FRAME).all(|frame| vad.push(frame).is_none()));
@@ -288,7 +305,8 @@ mod speech {
         let tiny = data_dir().join("models/ggml-tiny.bin");
         let model = if tiny.is_file() { tiny } else { data_dir().join("models/ggml-small.bin") };
         let context = stt::load_model(&model).unwrap();
-        let text = stt::transcribe(&context, &utterance, "pt", Some("O assistente se chama Kai.")).unwrap();
+        let text =
+            stt::transcribe(&context, &utterance, "pt", Some("O assistente se chama Kai."), stt::WAKE_THREADS).unwrap();
         eprintln!("heard: {text:?} with {}", model.display());
         // Piper's synthetic voice garbles some words; the name is what must come through.
         assert!(match_wake(&text, "KAI").is_some(), "the pet's name was not heard in {text:?}");

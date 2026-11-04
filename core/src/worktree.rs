@@ -26,6 +26,21 @@ async fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Makes `root` a git repository with a first (empty) commit, unless it is one.
+pub async fn init_repository(root: &Path) -> Result<(), String> {
+    tokio::fs::create_dir_all(root).await.map_err(|e| format!("{}: {e}", root.display()))?;
+    if !is_repository(root).await {
+        git(root, &["init", "-q"]).await?;
+    }
+    if git(root, &["rev-parse", "--verify", "HEAD"]).await.is_err() {
+        let identity = ["-c", "user.name=Orchestrator", "-c", "user.email=orchestrator@localhost"];
+        let mut args = identity.to_vec();
+        args.extend(["commit", "-q", "--allow-empty", "-m", "Personal workspace"]);
+        git(root, &args).await?;
+    }
+    Ok(())
+}
+
 pub async fn is_repository(root: &Path) -> bool {
     git(root, &["rev-parse", "--is-inside-work-tree"]).await.is_ok_and(|out| out == "true")
 }

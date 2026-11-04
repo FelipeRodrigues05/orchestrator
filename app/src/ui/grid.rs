@@ -15,6 +15,8 @@ pub enum Tone {
     Warn,
     Error,
     Stopped,
+    /// An agent's own colour, an index into `render::AGENT_RGB`.
+    Agent(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

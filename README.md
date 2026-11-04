@@ -107,7 +107,8 @@ cargo test --workspace
 cargo test -p core acp_ -- --ignored        # against a real ACP CLI
 ```
 
-Read [SPEC.md](SPEC.md) and the [ADRs](docs/adr/README.md) before changing the
-architecture. [docs/HANDOFF.md](docs/HANDOFF.md) has the current state and
+Start with [docs/CODE_TOUR.md](docs/CODE_TOUR.md): how the app boots and what
+each file does. Read [SPEC.md](SPEC.md) and the [ADRs](docs/adr/README.md) before
+changing the architecture. [docs/HANDOFF.md](docs/HANDOFF.md) has the current state and
 [docs/REFACTORING.md](docs/REFACTORING.md) what is left to clean up. Code,
 comments and docs are in English.

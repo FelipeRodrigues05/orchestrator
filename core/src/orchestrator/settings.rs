@@ -194,4 +194,23 @@ impl Orchestrator {
         self.notice(LogLevel::Info, format!("updating {}…", labels.join(", ")));
         self.update(None, plans);
     }
+
+    pub(super) fn set_fallback(&mut self, text: &str) {
+        let text = text.trim();
+        if text == "reset" {
+            self.router.reset();
+            self.notice(LogLevel::Info, "every model is available again");
+            return;
+        }
+        self.router.chain = super::parse_chain(text);
+        if let Some(store) = &self.store {
+            store.set_setting("fallback_chain", &self.router.chain.join(", "));
+        }
+        let text = if self.router.chain.is_empty() {
+            "on limits, agents go to the closest model available".to_owned()
+        } else {
+            format!("on limits, agents go on in this order: {}", self.router.chain.join(" → "))
+        };
+        self.notice(LogLevel::Info, text);
+    }
 }

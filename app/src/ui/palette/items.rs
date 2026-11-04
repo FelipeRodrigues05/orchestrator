@@ -1,10 +1,16 @@
 //! What each mode lists: the commands, the wizard's choices, providers and voices.
 
+use std::path::Path;
+
 use orch_core::model::{Agent, AgentState, AppState, Language, Provider};
 use uuid::Uuid;
 
-use super::{Item, Mode, Palette, Pick, Step};
-use crate::ui::room::{ACCENT, TEXT, View, WARN};
+use super::{Item, Mode, Palette, Pick, Step, personas::PRESETS};
+use crate::ui::grid::{Style, Tone};
+use crate::ui::room::{ACCENT, AGENT_COLORS, TEXT, View, WARN, expand_home};
+
+/// Fuzzy matching every file of a huge repository on each key is not worth it.
+const MAX_MENTION_FILES: usize = 5000;
 
 impl Palette {
     pub(super) fn items(&self, state: &AppState, selected: Option<Uuid>) -> Vec<Item> {
@@ -14,9 +20,12 @@ impl Palette {
             Mode::NewAgent(wizard) => match wizard.step {
                 Step::Group => self.group_items(state),
                 Step::Provider => self.provider_items(state),
+                Step::Persona => self.persona_items(),
                 _ => Vec::new(),
             },
             Mode::SwitchProvider(_) => self.provider_items(state),
+            Mode::Model(agent) => self.model_items(state, *agent),
+            Mode::Color(agent) => color_items(state, *agent),
             Mode::Voice => self.voice_items(state),
             Mode::PetModel => self.pet_model_items(state),
             Mode::ApiKey => state
@@ -40,7 +49,10 @@ impl Palette {
                     )
                 })
                 .collect(),
-            Mode::NewGroup { .. } | Mode::OpenProject | Mode::Persona(_) => Vec::new(),
+            Mode::OpenProject => self.project_items(state),
+            Mode::Mention(files) => mention_items(files),
+            Mode::Persona(_) => self.persona_items(),
+            Mode::NewGroup { .. } => Vec::new(),
         }
     }
 
@@ -114,7 +126,7 @@ impl Palette {
             ));
         }
         for (index, view) in View::ALL.into_iter().enumerate() {
-            let keys = ["F1", "F2", "F3", "F4", "F5"][index];
+            let keys = ["F1", "F2", "F3", "F4", "F5", "F6 r"][index];
             items.push(item(
                 format!("View: {}", view.label().to_lowercase()),
                 "",
@@ -155,7 +167,21 @@ impl Palette {
     /// The new-agent wizard's groups, plus "create" for a name not taken.
     fn group_items(&self, state: &AppState) -> Vec<Item> {
         if state.project().is_none() {
-            return vec![item("Open a project first", "", "", Pick::OpenProject)];
+            // Agents need no project: they go to the personal workspace.
+            return vec![
+                item(
+                    "Personal",
+                    "no project: an agent of your own (marketing, writing, planning…)",
+                    "",
+                    Pick::Group("Personal".into()),
+                ),
+                item(
+                    "Open a project",
+                    "agents that work on a repository",
+                    "o",
+                    Pick::OpenProject,
+                ),
+            ];
         }
         let mut items: Vec<Item> = state
             .focused_groups()
@@ -244,6 +270,117 @@ impl Palette {
             .collect()
     }
 
+    /// A typed path, the folder chooser, recent projects, then repositories on disk.
+    fn project_items(&self, state: &AppState) -> Vec<Item> {
+        let mut items = Vec::new();
+        let typed = self.query.trim();
+        if typed.starts_with(['/', '~', '.']) {
+            let mut path = item(
+                format!("open “{typed}”"),
+                "a folder",
+                "",
+                Pick::OpenPath(expand_home(typed)),
+            );
+            path.style = ACCENT;
+            items.push(path);
+        }
+        items.push(item("Browse…", "pick a folder", "", Pick::Browse));
+        let open = |root: &Path| state.projects.iter().any(|p| p.root == root);
+        let recent = state.recent_projects.iter().map(|root| (root, "recent"));
+        let found = state
+            .repositories
+            .iter()
+            .filter(|root| !state.recent_projects.contains(root))
+            .map(|root| (root, "repository"));
+        for (root, kind) in recent.chain(found) {
+            let name = root.file_name().map_or_else(
+                || root.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            let kind = if open(root) { "open" } else { kind };
+            items.push(item(
+                name,
+                format!("{} · {kind}", short_home(root)),
+                "",
+                Pick::OpenPath(root.clone()),
+            ));
+        }
+        items
+    }
+
+    /// "None", the ready-made ones, and what was typed (listed last by the filter).
+    fn persona_items(&self) -> Vec<Item> {
+        let mut items = Vec::new();
+        let typed = self.query.trim();
+        if !typed.is_empty() {
+            let mut custom = item(
+                format!("use “{typed}”"),
+                "your own description",
+                "",
+                Pick::PersonaText(typed.into()),
+            );
+            custom.style = ACCENT;
+            items.push(custom);
+        }
+        items.push(item(
+            "No persona",
+            "just the task",
+            "",
+            Pick::PersonaText(String::new()),
+        ));
+        items.extend(PRESETS.iter().map(|(name, persona)| {
+            item(
+                *name,
+                *persona,
+                "",
+                Pick::PersonaText((*persona).to_owned()),
+            )
+        }));
+        items
+    }
+
+    /// What the agent's CLI offers (the current one marked), and the typed id.
+    fn model_items(&self, state: &AppState, agent: Uuid) -> Vec<Item> {
+        let Some(agent) = state.agent(agent) else {
+            return Vec::new();
+        };
+        let mut items: Vec<Item> = agent
+            .models
+            .iter()
+            .map(|model| {
+                let now = agent.model.as_deref() == Some(model.as_str());
+                item(
+                    model.clone(),
+                    if now { "in use" } else { "" },
+                    "",
+                    Pick::Model(model.clone()),
+                )
+            })
+            .collect();
+        if items.is_empty() {
+            let provider = agent.provider.short_name();
+            let waiting = match agent.provider {
+                orch_core::model::Provider::Api { .. } => {
+                    format!("{provider} lists no models here: type the id")
+                }
+                _ => format!("asking {provider} for its models…"),
+            };
+            items.push(item(waiting, "", "", Pick::Waiting));
+        }
+        let typed = self.query.trim();
+        if !typed.is_empty() && !agent.models.iter().any(|m| m == typed) {
+            let mut custom = item(
+                format!("use “{typed}”"),
+                "a model id the CLI understands",
+                "",
+                Pick::Model(typed.into()),
+            );
+            custom.style = ACCENT;
+            items.push(custom);
+        }
+        items
+    }
+
     pub(super) fn provider_items(&self, state: &AppState) -> Vec<Item> {
         let mut items: Vec<Item> = state
             .providers
@@ -324,6 +461,23 @@ fn agent_items(agent: &Agent) -> Vec<Item> {
             Pick::OpenIn,
         ),
         item(
+            format!("Color of {}", agent.name),
+            agent.color.clone().unwrap_or_else(|| "automatic".into()),
+            "",
+            Pick::ChooseColor(agent.id),
+        ),
+        item(
+            format!("Model of {}", agent.name),
+            match (&agent.model, agent.models.len()) {
+                (Some(model), 0) => format!("now {model}"),
+                (Some(model), n) => format!("now {model} · {n} offered"),
+                (None, 0) => "its CLI's default · start it to see the models".to_owned(),
+                (None, n) => format!("its CLI's default · {n} offered"),
+            },
+            "",
+            Pick::ChooseModel(agent.id),
+        ),
+        item(
             format!("Switch provider of {}", agent.name),
             format!(
                 "now {} · keeps the conversation",
@@ -385,5 +539,72 @@ fn project_items(state: &AppState) -> Vec<Item> {
             Pick::Lead(group.name.clone()),
         ));
     }
+    items
+}
+
+/// `@pet` first, then the project's files.
+fn mention_items(files: &[String]) -> Vec<Item> {
+    let mut items = vec![item(
+        "pet",
+        "ask the pet instead of an agent",
+        "",
+        Pick::Insert("pet ".into()),
+    )];
+    items.extend(
+        files
+            .iter()
+            .take(MAX_MENTION_FILES)
+            .map(|file| item(file.clone(), "", "", Pick::Insert(format!("{file} ")))),
+    );
+    items
+}
+
+/// `~/code/shop` instead of `/home/me/code/shop`.
+fn short_home(path: &Path) -> String {
+    match std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        Some(home) if path.starts_with(&home) => {
+            format!("~/{}", path.strip_prefix(&home).unwrap_or(path).display())
+        }
+        _ => path.display().to_string(),
+    }
+}
+
+/// Each colour drawn in itself, then automatic and plain.
+fn color_items(state: &AppState, agent: Uuid) -> Vec<Item> {
+    let current = state.agent(agent).and_then(|a| a.color.clone());
+    let mark = |name: Option<&str>| {
+        if current.as_deref() == name {
+            "in use"
+        } else {
+            ""
+        }
+    };
+    let mut items: Vec<Item> = AGENT_COLORS
+        .iter()
+        .enumerate()
+        .map(|(index, (name, portuguese))| {
+            let detail = format!("{portuguese} {}", mark(Some(name)));
+            let mut entry = item(
+                *name,
+                detail.trim().to_owned(),
+                "",
+                Pick::Color(Some((*name).to_owned())),
+            );
+            entry.style = Style::new(Tone::Agent(index as u8)).bold();
+            entry
+        })
+        .collect();
+    items.push(item(
+        "auto",
+        format!("one picked from the agent {}", mark(None)),
+        "",
+        Pick::Color(None),
+    ));
+    items.push(item(
+        "none",
+        format!("plain text {}", mark(Some("none"))),
+        "",
+        Pick::Color(Some("none".into())),
+    ));
     items
 }

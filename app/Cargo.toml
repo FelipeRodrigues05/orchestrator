@@ -11,6 +11,7 @@ path = "src/main.rs"
 adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
 async-channel.workspace = true
 chrono = "0.4"
+glib-unix = "0.22"
 gtk = { package = "gtk4", version = "0.11", features = ["v4_12"] }
 gtk4-layer-shell = "0.8.1"
 ksni = { version = "0.3.7", features = ["blocking"] }

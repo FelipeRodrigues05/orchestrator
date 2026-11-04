@@ -8,7 +8,9 @@ use orch_core::{
 };
 use uuid::Uuid;
 
+use super::format::{AGENT_COLORS, parse_color};
 use super::{DIM, Prompt, Room, View, WARN};
+use crate::ui::palette::Palette;
 
 impl Room {
     pub(super) fn run(&mut self, line: &str) {
@@ -24,18 +26,26 @@ impl Room {
                 self.outbox.push(Command::Ping);
             }
             "ack" => self.ack(),
-            "open" if !rest.is_empty() => self.outbox.push(Command::OpenProject {
-                root: expand_home(rest),
-            }),
+            "open" if rest.is_empty() => self.palette = Some(Palette::open_project()),
+            "open" => {
+                let root = self.project_root(rest);
+                self.outbox.push(Command::OpenProject { root });
+            }
             "project" | "close" => self.project_command(&word, rest),
-            "group" => match rest.split_once(':') {
-                Some((name, goal)) => self.outbox.push(Command::CreateGroup {
-                    name: name.trim().into(),
-                    goal: goal.trim().into(),
-                }),
-                None => self.say("usage: :group <name>: <goal>", WARN),
-            },
+            // `:group API: payments backend`, or just `:group API` (the goal is optional).
+            "group" => {
+                let (name, goal) = rest.split_once(':').unwrap_or((rest, ""));
+                if name.trim().is_empty() {
+                    self.say("usage: :group <name>[: <goal>]", WARN);
+                } else {
+                    self.outbox.push(Command::CreateGroup {
+                        name: name.trim().into(),
+                        goal: goal.trim().into(),
+                    });
+                }
+            }
             "persona" => self.persona_command(rest),
+            "color" | "colour" | "cor" => self.color_command(rest),
             "new" => self.new_command(rest),
             "start" | "stop" | "remove" | "merge" => self.agent_command(&word, rest),
             "edit" | "code" => {
@@ -46,14 +56,31 @@ impl Room {
                 let editor = (!editor.is_empty()).then(|| editor.to_owned());
                 self.outbox.push(Command::OpenIn { agent, editor });
             }
-            "provider" | "model" if !rest.is_empty() => match self.selected {
+            "provider" if !rest.is_empty() => match self.selected {
                 Some(agent) => self.outbox.push(Command::SetProvider {
                     agent,
                     provider: rest.to_owned(),
                 }),
                 None => self.say("select an agent first", WARN),
             },
+            "model" => match (self.selected, rest) {
+                (None, _) => self.say("select an agent first", WARN),
+                (Some(agent), "") => {
+                    self.palette = Some(Palette::model(agent));
+                    self.outbox.push(Command::ProbeModels(agent));
+                }
+                (Some(agent), model) => self.outbox.push(Command::SetModel {
+                    agent,
+                    model: model.to_owned(),
+                }),
+            },
             "update" => self.outbox.push(Command::UpdateClis),
+            // `:fallback claude/opus, codex/gpt-6-astra` · `:fallback auto` · `:fallback reset`
+            "fallback" if rest.is_empty() => self.say(
+                "usage: :fallback <provider[/model]>, … | auto | reset",
+                WARN,
+            ),
+            "fallback" => self.outbox.push(Command::SetFallback(rest.to_owned())),
             "limit" => self.limit_command(rest),
             "timeout" => match rest.parse::<u64>() {
                 Ok(minutes) if minutes > 0 => {
@@ -105,6 +132,35 @@ impl Room {
         }
     }
 
+    /// `:open shop` finds a recent project or a repository found on disk by its
+    /// folder name; anything that looks like a path is taken as one.
+    fn project_root(&self, wanted: &str) -> PathBuf {
+        let looks_like_path = wanted.starts_with(['/', '~', '.']) || wanted.contains('/');
+        let known = self
+            .state
+            .as_ref()
+            .filter(|_| !looks_like_path)
+            .and_then(|state| {
+                let name = wanted.to_lowercase();
+                let named = |root: &&PathBuf, exact: bool| {
+                    root.file_name().is_some_and(|n| {
+                        let n = n.to_string_lossy().to_lowercase();
+                        if exact {
+                            n == name
+                        } else {
+                            n.starts_with(&name)
+                        }
+                    })
+                };
+                let all = || state.recent_projects.iter().chain(&state.repositories);
+                all()
+                    .find(|root| named(root, true))
+                    .or_else(|| all().find(|root| named(root, false)))
+                    .cloned()
+            });
+        known.unwrap_or_else(|| expand_home(wanted))
+    }
+
     /// The agent a command is about: the one named, or the selected one.
     fn target(&self, name: &str) -> Option<Uuid> {
         if name.is_empty() {
@@ -148,6 +204,21 @@ impl Room {
                 persona: persona.trim().into(),
             }),
             None => self.say("usage: :persona <agent>: <who it is>", WARN),
+        }
+    }
+
+    /// `:color green` for the selected agent, `:color Kio verde`, `:color auto|none`.
+    fn color_command(&mut self, rest: &str) {
+        let (name, color) = rest.rsplit_once(' ').unwrap_or(("", rest));
+        let colors: Vec<&str> = AGENT_COLORS.iter().map(|(en, _)| *en).collect();
+        let usage = format!("usage: :color [agent] <{}|auto|none>", colors.join("|"));
+        let Some(color) = parse_color(color) else {
+            self.say(&usage, WARN);
+            return;
+        };
+        match self.target(name.trim()) {
+            Some(agent) => self.outbox.push(Command::SetColor { agent, color }),
+            None => self.say(&usage, WARN),
         }
     }
 

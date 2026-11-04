@@ -198,6 +198,9 @@ mod smoke {
             started_at: None,
             usage: Default::default(),
             persona: String::new(),
+            model: None,
+            models: Vec::new(),
+            color: None,
         };
         let mut runner = ApiRunner::new(context);
         runner.start(&agent, "").await.unwrap();

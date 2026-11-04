@@ -45,6 +45,12 @@ impl Orchestrator {
             self.broker.set_rules(RuleScope::Agent(agent.id), agent.rules.clone());
         }
         let (id, name) = (project.id, project.name.clone());
+        if let Some(store) = &self.store {
+            store.opened(id);
+        }
+        self.state.recent_projects.retain(|recent| *recent != root);
+        self.state.recent_projects.insert(0, root.clone());
+        self.state.recent_projects.truncate(super::RECENT_PROJECTS);
         let counts = (groups.len(), agents.len());
         self.layouts.insert(id, layout);
         self.state.projects.push(project);
@@ -108,6 +114,29 @@ impl Orchestrator {
         }
     }
 
+    /// Agents need a project; with none open, the personal workspace opens.
+    pub(super) async fn ensure_project(&mut self) {
+        if !self.state.projects.is_empty() {
+            return;
+        }
+        let root = self.workspace.clone();
+        match worktree::init_repository(&root).await {
+            Ok(()) => self.open_project(root).await,
+            Err(error) => self.notice(LogLevel::Error, format!("could not prepare the personal workspace: {error}")),
+        }
+    }
+
+    /// In the personal workspace an agent's group is made on the spot: there is no
+    /// project to plan groups for.
+    pub(super) fn ensure_workspace_group(&mut self, group: &str) {
+        // Opened projects keep their canonical root.
+        let workspace = std::fs::canonicalize(&self.workspace).unwrap_or_else(|_| self.workspace.clone());
+        let in_workspace = self.state.project().is_some_and(|p| p.root == workspace);
+        if in_workspace && self.find_group(group).is_none() {
+            self.create_group(group, "agents that work outside any project");
+        }
+    }
+
     pub(super) fn create_group(&mut self, name: &str, goal: &str) {
         let Some(project) = self.state.project() else {
             self.notice(LogLevel::Warn, "open a project first: :open <path>");
@@ -115,7 +144,7 @@ impl Orchestrator {
         };
         let name = name.trim().to_owned();
         if name.is_empty() {
-            self.notice(LogLevel::Warn, "usage: :group <name>: <goal>");
+            self.notice(LogLevel::Warn, "usage: :group <name>[: <goal>]");
             return;
         }
         if self.state.focused_groups().any(|g| normalize(&g.name) == normalize(&name)) {
@@ -203,6 +232,9 @@ impl Orchestrator {
             name,
             task: task.trim().to_owned(),
             persona: persona.trim().to_owned(),
+            model: None,
+            models: Vec::new(),
+            color: None,
             provider,
             state: AgentState::Stopped,
             rules: Vec::new(),

@@ -50,6 +50,9 @@ struct VoiceActor {
     wake_model: Whisper,
     /// Until when the pet waits for a command after hearing its name.
     armed_until: Option<Instant>,
+    /// A name check is running; utterances heard meanwhile are dropped, so checks
+    /// never pile up.
+    checking: bool,
 }
 
 impl VoiceActor {
@@ -69,6 +72,7 @@ impl VoiceActor {
             wake: None,
             wake_model: Arc::new(OnceLock::new()),
             armed_until: None,
+            checking: false,
         }
     }
 
@@ -143,7 +147,7 @@ impl VoiceActor {
         let (whisper, language, tx) = (self.whisper.clone(), self.language, self.tx.clone());
         tokio::spawn(async move {
             let samples = samples.await.unwrap_or_default();
-            transcribe_later(model, whisper, language, None, samples, move |result| {
+            transcribe_later(model, whisper, language, None, stt::command_threads(), samples, move |result| {
                 let _ = tx.send(Msg::Transcribed(result));
             });
         });
@@ -153,6 +157,9 @@ impl VoiceActor {
     fn set_wake(&mut self, name: Option<String>) {
         if let Some((_, listener)) = self.wake.take() {
             let _ = listener.send(wake::WakeMsg::Stop);
+        }
+        if name.is_some() && find_wake_model().is_none() {
+            self.status.detail = Some("the wake word needs whisper tiny: :voice install yes".into());
         }
         if let (Some(name), true) = (name, find_wake_model().is_some()) {
             let tx = self.tx.clone();
@@ -173,7 +180,7 @@ impl VoiceActor {
     /// otherwise a quick check for its name.
     fn utterance(&mut self, samples: Vec<f32>) {
         // Never react to our own speech or while push-to-talk is in use.
-        let busy = self.status.listening || self.status.transcribing || self.status.speaking;
+        let busy = self.status.listening || self.status.transcribing || self.status.speaking || self.checking;
         if busy || self.wake.is_none() {
             return;
         }
@@ -183,18 +190,22 @@ impl VoiceActor {
             self.status.armed = false;
             let Some(model) = self.model.clone() else { return };
             self.status.transcribing = true;
-            transcribe_later(model, self.whisper.clone(), self.language, None, samples, move |result| {
+            let threads = stt::command_threads();
+            transcribe_later(model, self.whisper.clone(), self.language, None, threads, samples, move |result| {
                 let _ = tx.send(Msg::Transcribed(result));
             });
         } else if let Some(path) = find_wake_model() {
+            self.checking = true;
             let hint = self.wake.as_ref().map(|(name, _)| format!("O assistente se chama {name}."));
-            transcribe_later(path, self.wake_model.clone(), self.language, hint, samples, move |result| {
+            let threads = stt::WAKE_THREADS;
+            transcribe_later(path, self.wake_model.clone(), self.language, hint, threads, samples, move |result| {
                 let _ = tx.send(Msg::WakeCheck(result));
             });
         }
     }
 
     fn wake_check(&mut self, result: Result<String, String>) {
+        self.checking = false;
         let (Some((name, _)), Ok(text)) = (&self.wake, result) else { return };
         match wake::match_wake(&text, name) {
             // Just the name: wait for the command.

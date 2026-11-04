@@ -18,7 +18,12 @@ impl Orchestrator {
         if !agent.persona.is_empty() {
             let _ = write!(prompt, "\nWho you are: {}", agent.persona);
         }
-        let _ = write!(prompt, "\n\nGroup goal: {}\n\nYour task: {}", group.goal, agent.task);
+        if !group.goal.is_empty() {
+            let _ = write!(prompt, "\n\nGroup goal: {}", group.goal);
+        }
+        let _ = write!(prompt, "\n\nYour task: {}", agent.task);
+        prompt
+            .push_str("\nPaths written as @path/to/file are files of the project, relative to your working directory.");
         let team = self.roster(agent.id);
         if !team.is_empty() {
             let _ = write!(

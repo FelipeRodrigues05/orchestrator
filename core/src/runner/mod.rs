@@ -46,6 +46,13 @@ pub enum AgentEvent {
     },
     /// Tokens spent by the last model call or turn.
     Usage(crate::model::Usage),
+    /// The models the agent can use and the one it uses now.
+    Models {
+        current: Option<String>,
+        available: Vec<String>,
+    },
+    /// Something the operator should know that is not an error of the agent.
+    Notice(String),
     Error(String),
     /// The process or task is gone.
     Exited,
@@ -60,6 +67,10 @@ pub trait AgentRunner: Send {
     /// Taken once, right after `start`.
     fn events(&mut self) -> mpsc::Receiver<AgentEvent>;
     async fn stop(&mut self) -> RunnerResult<()>;
+    /// Switches the model of the running session, from its next message on.
+    async fn set_model(&mut self, _model: &str) -> RunnerResult<()> {
+        Err("this agent cannot switch models while it runs".into())
+    }
 }
 
 /// What a runner needs from the rest of the app.
@@ -90,11 +101,13 @@ pub(crate) struct AgentInfo {
     pub id: Uuid,
     pub name: String,
     pub worktree: PathBuf,
+    /// The model the operator chose, if any.
+    pub model: Option<String>,
 }
 
 impl AgentInfo {
     pub fn of(agent: &Agent) -> Self {
-        Self { id: agent.id, name: agent.name.clone(), worktree: agent.worktree.clone() }
+        Self { id: agent.id, name: agent.name.clone(), worktree: agent.worktree.clone(), model: agent.model.clone() }
     }
 }
 

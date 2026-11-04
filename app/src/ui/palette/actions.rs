@@ -29,13 +29,6 @@ impl Palette {
                     self.query.clear();
                     Outcome::Keep
                 }
-                Step::Persona => Outcome::Done(Command::CreateAgent {
-                    group: wizard.group.clone().unwrap_or_default(),
-                    name: wizard.name.clone().unwrap_or_default(),
-                    provider: wizard.provider.clone(),
-                    task: wizard.task.clone().unwrap_or_default(),
-                    persona: text,
-                }),
                 _ => Outcome::Keep,
             },
             Mode::NewGroup { name } => match name.take() {
@@ -46,13 +39,6 @@ impl Palette {
                 }
                 Some(name) => Outcome::Done(Command::CreateGroup { name, goal: text }),
             },
-            Mode::OpenProject => Outcome::Done(Command::OpenProject {
-                root: crate::ui::room::expand_home(&text),
-            }),
-            Mode::Persona(agent) => Outcome::Done(Command::SetPersona {
-                agent: *agent,
-                persona: text,
-            }),
             _ => Outcome::Keep,
         }
     }
@@ -91,6 +77,41 @@ impl Palette {
             Pick::GoTo(id) => Outcome::Select(id),
             Pick::FocusProject(id) => Outcome::Done(Command::FocusProject(id)),
             Pick::CloseProject(id) => Outcome::Done(Command::CloseProject(id)),
+            Pick::OpenPath(root) => Outcome::Done(Command::OpenProject { root }),
+            Pick::Browse => Outcome::Browse,
+            Pick::Insert(text) => Outcome::Insert(text),
+            Pick::ChooseModel(agent) => {
+                self.to(Mode::Model(agent));
+                // The list fills in as the provider answers.
+                Outcome::Send(Command::ProbeModels(agent))
+            }
+            Pick::Waiting => Outcome::Keep,
+            Pick::ChooseColor(agent) => {
+                self.to(Mode::Color(agent));
+                Outcome::Keep
+            }
+            Pick::Color(color) => match self.mode {
+                Mode::Color(agent) => Outcome::Done(Command::SetColor { agent, color }),
+                _ => Outcome::Keep,
+            },
+            Pick::Model(model) => match self.mode {
+                Mode::Model(agent) => Outcome::Done(Command::SetModel { agent, model }),
+                _ => Outcome::Keep,
+            },
+            Pick::PersonaText(persona) => match &self.mode {
+                Mode::NewAgent(wizard) => Outcome::Done(Command::CreateAgent {
+                    group: wizard.group.clone().unwrap_or_default(),
+                    name: wizard.name.clone().unwrap_or_default(),
+                    provider: wizard.provider.clone(),
+                    task: wizard.task.clone().unwrap_or_default(),
+                    persona,
+                }),
+                Mode::Persona(agent) => Outcome::Done(Command::SetPersona {
+                    agent: *agent,
+                    persona,
+                }),
+                _ => Outcome::Keep,
+            },
             Pick::Persona(agent) => {
                 self.to(Mode::Persona(agent));
                 Outcome::Keep

@@ -9,7 +9,7 @@ use orch_core::{
 use uuid::Uuid;
 
 use super::format::display_order;
-use super::{Action, DIM, Key, Prompt, Room, View};
+use super::{Action, DIM, Key, Prompt, Room, Scroll, View, editor::Editor};
 use crate::ui::palette::{Outcome, Palette};
 
 impl Room {
@@ -18,29 +18,8 @@ impl Room {
             self.palette_key(palette, key);
             return;
         }
-        if let Some(prompt) = self.prompt.as_mut() {
-            let buffer = match prompt {
-                Prompt::Text(text) => text,
-                Prompt::Secret { key, .. } => key,
-            };
-            match key {
-                Key::Char(ch) => buffer.push(ch),
-                Key::Backspace => {
-                    buffer.pop();
-                }
-                Key::Escape => self.prompt = None,
-                Key::Enter => match self.prompt.take() {
-                    Some(Prompt::Text(text)) => self.submit(&text),
-                    Some(Prompt::Secret { service, key }) if !key.trim().is_empty() => {
-                        self.outbox.push(Command::SetApiKey {
-                            service,
-                            key: Secret(key.trim().to_owned()),
-                        });
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
+        if self.prompt.is_some() {
+            self.prompt_key(key);
             return;
         }
 
@@ -52,9 +31,12 @@ impl Room {
         }
 
         match key {
-            Key::Function(n @ 1..=5) => self.set_view(View::ALL[usize::from(n) - 1]),
-            Key::Char(ch @ '1'..='5') => self.set_view(View::ALL[ch as usize - '1' as usize]),
-            Key::Char('/' | 'i') | Key::Enter => self.prompt = Some(Prompt::Text(String::new())),
+            Key::Function(n @ 1..=6) => self.set_view(View::ALL[usize::from(n) - 1]),
+            Key::Char(ch @ '1'..='6') => self.set_view(View::ALL[ch as usize - '1' as usize]),
+            Key::Char('r') => self.set_view(View::Reader),
+            Key::Char('/' | 'i') | Key::Enter => {
+                self.prompt = Some(Prompt::Text(Editor::default()));
+            }
             Key::Char('j') | Key::Down => self.step(1),
             Key::Char('k') | Key::Up => self.step(-1),
             Key::Escape if self.modal().is_some() => {
@@ -64,6 +46,7 @@ impl Room {
             }
             Key::Palette | Key::Char(':' | ' ') => self.palette = Some(Palette::commands()),
             Key::Char('n') => self.palette = Some(Palette::new_agent()),
+            Key::Char('o') => self.palette = Some(Palette::open_project()),
             Key::Char('a') => self.answer_first(Answer::Allow),
             Key::Char('l') => self.answer_first(Answer::AlwaysAllow),
             Key::Char('g') => self.answer_first(Answer::AlwaysAllowGroup),
@@ -75,6 +58,20 @@ impl Room {
                 editor: None,
             }),
             Key::Char('?') => self.help = true,
+            Key::Page { up, log } => {
+                // A page is most of the console (or log) height.
+                let rows = if log { 12 } else { 6 };
+                let scroll = if log {
+                    &mut self.log_scroll
+                } else {
+                    &mut self.console_scroll
+                };
+                scroll.by(if up { rows } else { -rows });
+            }
+            Key::End => {
+                self.log_scroll = Scroll::default();
+                self.console_scroll = Scroll::default();
+            }
             Key::Char('[') => self.cycle_project(-1),
             Key::Char(']') => self.cycle_project(1),
             Key::Project(n) => {
@@ -88,6 +85,58 @@ impl Room {
                 }
             }
             Key::Escape => self.flash = None,
+            _ => {}
+        }
+    }
+
+    /// A key while the command line is open: edit the message, or type the API key.
+    fn prompt_key(&mut self, key: Key) {
+        let width = self.editor_width;
+        match (self.prompt.as_mut(), key) {
+            (_, Key::Escape) => self.prompt = None,
+            (Some(Prompt::Secret { .. }), Key::Enter) => {
+                if let Some(Prompt::Secret { service, key }) = self.prompt.take()
+                    && !key.trim().is_empty()
+                {
+                    self.outbox.push(Command::SetApiKey {
+                        service,
+                        key: Secret(key.trim().to_owned()),
+                    });
+                }
+            }
+            (Some(Prompt::Secret { key, .. }), Key::Char(ch)) => key.push(ch),
+            (Some(Prompt::Secret { key, .. }), Key::Backspace) => {
+                key.pop();
+            }
+            (Some(Prompt::Text(_)), Key::Enter) => {
+                if let Some(Prompt::Text(editor)) = self.prompt.take() {
+                    self.submit(editor.text());
+                }
+            }
+            // `@` starting a word mentions a file of the project.
+            (Some(Prompt::Text(editor)), Key::Char('@'))
+                if editor.before_cursor().is_none_or(char::is_whitespace) =>
+            {
+                editor.insert('@');
+                let files = self
+                    .mention_root()
+                    .map(|root| orch_core::discovery::project_files(&root, MENTION_FILES))
+                    .unwrap_or_default();
+                self.palette = Some(Palette::mention(files));
+            }
+            (Some(Prompt::Text(editor)), key) => match key {
+                Key::Char(ch) => editor.insert(ch),
+                Key::NewLine => editor.insert('\n'),
+                Key::Backspace => editor.backspace(),
+                Key::Delete => editor.delete(),
+                Key::Left => editor.left(),
+                Key::Right => editor.right(),
+                Key::Home => editor.home(width),
+                Key::End => editor.end(width),
+                Key::Up => editor.vertical(-1, width),
+                Key::Down => editor.vertical(1, width),
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -111,7 +160,7 @@ impl Room {
             Some(Action::Ack) => self.ack(),
             Some(Action::Prompt) => {
                 self.prompt
-                    .get_or_insert_with(|| Prompt::Text(String::new()));
+                    .get_or_insert_with(|| Prompt::Text(Editor::default()));
             }
             Some(Action::Defer(id)) => {
                 self.deferred.insert(id);
@@ -151,7 +200,15 @@ impl Room {
             Key::Escape => palette.escape(),
             Key::Enter => palette.enter(&state, self.selected),
             Key::Palette => Outcome::Close,
-            Key::Function(_) | Key::Project(_) => Outcome::Keep,
+            Key::Function(_)
+            | Key::Project(_)
+            | Key::NewLine
+            | Key::Delete
+            | Key::Left
+            | Key::Right
+            | Key::Home
+            | Key::End
+            | Key::Page { .. } => Outcome::Keep,
         };
         self.apply(palette, outcome);
     }
@@ -167,7 +224,7 @@ impl Room {
             Outcome::Done(command) => self.outbox.push(command),
             Outcome::View(view) => self.set_view(view),
             Outcome::Select(id) => self.select(Some(id)),
-            Outcome::Message => self.prompt = Some(Prompt::Text(String::new())),
+            Outcome::Message => self.prompt = Some(Prompt::Text(Editor::default())),
             Outcome::Secret(service) => {
                 self.prompt = Some(Prompt::Secret {
                     service,
@@ -176,6 +233,12 @@ impl Room {
             }
             Outcome::Help => self.help = true,
             Outcome::Run(command) => self.run(&command),
+            Outcome::Insert(text) => {
+                if let Some(Prompt::Text(editor)) = &mut self.prompt {
+                    editor.insert_str(&text);
+                }
+            }
+            Outcome::Browse => self.browse = true,
         }
     }
 
@@ -260,3 +323,6 @@ impl Room {
         self.focus_project(id);
     }
 }
+
+/// Files offered after `@`; enough for any repository worth mentioning by name.
+const MENTION_FILES: usize = 20_000;

@@ -23,8 +23,27 @@ fn color(tone: Tone) -> (f64, f64, f64) {
         Tone::Ok => rgb(0xd8, 0xd8, 0xd8),
         Tone::Warn | Tone::Error => rgb(0xff, 0x3b, 0x30),
         Tone::Stopped => rgb(0x5a, 0x5a, 0x5a),
+        Tone::Agent(index) => {
+            let (r, g, b) = AGENT_RGB[usize::from(index) % AGENT_RGB.len()];
+            rgb(r, g, b)
+        }
     }
 }
+
+/// Agents' colours, in the order of `room::format::AGENT_COLORS`: soft tones that
+/// read on black, and no red (red stays for what is urgent).
+const AGENT_RGB: [(u8, u8, u8); 10] = [
+    (0x5f, 0xd7, 0xff),
+    (0x7c, 0xd9, 0x92),
+    (0xf0, 0xd0, 0x6e),
+    (0xe0, 0x7b, 0xe0),
+    (0x7a, 0xa2, 0xf7),
+    (0xf5, 0xa9, 0x5b),
+    (0x4f, 0xd1, 0xc5),
+    (0xff, 0x9e, 0xc8),
+    (0xb3, 0x94, 0xf4),
+    (0xc3, 0xe8, 0x8d),
+];
 
 /// Where the grid sits inside the widget, to map clicks back to cells.
 #[derive(Debug, Clone, Copy, Default)]

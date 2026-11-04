@@ -35,3 +35,4 @@ architecture looks the way it does.
 | [0017](0017-several-open-projects.md) | Several projects open at once | Accepted |
 | [0018](0018-personas-and-team-tools.md) | Agent personas and agents that call each other | Accepted |
 | [0019](0019-desktop-install-scope-and-tray.md) | Desktop install, own systemd scope and a tray icon | Accepted |
+| [0020](0020-model-router-on-usage-limits.md) | Model router: fall back to the closest model on usage limits | Accepted |

@@ -288,3 +288,198 @@ fn open_projects_sit_left_of_the_sector_map() {
     assert!(screen.contains("Lojinha"), "{screen}");
     assert!(screen.contains("ORCH//STOREFRONT"));
 }
+
+#[test]
+fn at_mentions_and_open_by_name() {
+    let mut room = room();
+    room.drain();
+    // `@` at the start of a word opens the mention list; the pet is always first.
+    room.key(Key::Enter);
+    for ch in "veja @".chars() {
+        room.key(Key::Char(ch));
+    }
+    room.key(Key::Enter);
+    for ch in "o handler".chars() {
+        room.key(Key::Char(ch));
+    }
+    room.key(Key::Enter);
+    assert!(
+        matches!(&room.drain()[..], [Command::Say { text, .. }] if text == "veja @pet o handler"),
+    );
+    // An e-mail address is not a mention.
+    room.key(Key::Enter);
+    for ch in "me@x".chars() {
+        room.key(Key::Char(ch));
+    }
+    assert!(room.palette.is_none());
+    room.key(Key::Escape);
+
+    let mut state = sample_state();
+    state.repositories = vec!["/home/me/code/storefront".into()];
+    room.set_state(state);
+    room.drain();
+    type_line(&mut room, ":open store");
+    assert_eq!(
+        room.drain(),
+        vec![Command::OpenProject {
+            root: "/home/me/code/storefront".into()
+        }]
+    );
+}
+
+#[test]
+fn o_opens_the_project_list() {
+    let mut room = room();
+    room.key(Key::Char('o'));
+    let screen = text(&room.compose(160, 48));
+    assert!(
+        screen.contains("OPEN PROJECT") && screen.contains("Browse…"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn long_messages_open_the_editor_panel() {
+    let mut room = room();
+    room.drain();
+    room.key(Key::Enter);
+    let long = "escreva testes de integração para o handler de pix cobrindo reembolso, \
+                expiração do QR code, valores inválidos e o webhook de confirmação do banco";
+    for ch in long.chars() {
+        room.key(Key::Char(ch));
+    }
+    room.key(Key::NewLine);
+    for ch in "e rode tudo".chars() {
+        room.key(Key::Char(ch));
+    }
+    let screen = text(&room.compose(120, 40));
+    if std::env::var_os("SHOW").is_some() {
+        eprintln!("{screen}");
+    }
+    assert!(screen.contains("MESSAGE"), "{screen}");
+    assert!(
+        screen.contains("webhook de confirmação do banco"),
+        "{screen}"
+    );
+    assert!(screen.contains("e rode tudo"), "{screen}");
+
+    // Edit in the middle: go up a line and fix a word.
+    room.key(Key::Up);
+    room.key(Key::Home);
+    room.key(Key::Delete);
+    room.key(Key::Char('E'));
+    room.key(Key::Enter);
+    let [Command::Say { text, .. }] = &room.drain()[..] else {
+        panic!("nothing sent")
+    };
+    assert!(text.ends_with("\ne rode tudo"), "{text}");
+}
+
+#[test]
+fn logs_scroll_back_and_hold_still_while_lines_arrive() {
+    let line = |n: usize| LogEntry {
+        at: chrono::Utc::now(),
+        agent_id: None,
+        level: LogLevel::Info,
+        text: format!("line number {n:03}"),
+    };
+    let mut state = sample_state();
+    state.permissions.clear();
+    state.log = (0..200).map(line).collect();
+    let mut room = Room::new();
+    room.set_state(state.clone());
+    room.key(Key::Function(4));
+    let screen = text(&room.compose(120, 40));
+    assert!(screen.contains("line number 199") && !screen.contains("line number 100"));
+
+    // Shift+PageUp reads older lines and marks how many are below.
+    for _ in 0..8 {
+        room.key(Key::Page {
+            up: true,
+            log: true,
+        });
+    }
+    let screen = text(&room.compose(120, 40));
+    assert!(!screen.contains("line number 199"), "{screen}");
+    assert!(screen.contains("↓ 96 · End"), "{screen}");
+    let oldest_shown = (0..200)
+        .find(|n| screen.contains(&format!("line number {n:03}")))
+        .unwrap();
+
+    // New lines do not move the view.
+    state.log.extend((200..210).map(line));
+    room.set_state(state);
+    let screen = text(&room.compose(120, 40));
+    assert!(
+        screen.contains(&format!("line number {oldest_shown:03}")),
+        "{screen}"
+    );
+    assert!(screen.contains("↓ 106 · End"), "{screen}");
+
+    // The wheel scrolls the pane under the pointer; End follows new lines again.
+    room.scroll(60, 20, -200);
+    let screen = text(&room.compose(120, 40));
+    assert!(screen.contains("line number 209"), "{screen}");
+    room.key(Key::Page {
+        up: true,
+        log: true,
+    });
+    room.key(Key::End);
+    let screen = text(&room.compose(120, 40));
+    assert!(
+        screen.contains("line number 209") && !screen.contains("↓"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn agents_paint_their_log_lines_in_their_colour() {
+    let mut state = sample_state();
+    state.permissions.clear();
+    let agent = state.agents[0].clone();
+    state.agents[0].color = Some("green".into());
+    state.log = vec![
+        LogEntry {
+            at: chrono::Utc::now(),
+            agent_id: Some(agent.id),
+            level: LogLevel::Info,
+            text: "tests pass".into(),
+        },
+        LogEntry {
+            at: chrono::Utc::now(),
+            agent_id: Some(agent.id),
+            level: LogLevel::Error,
+            text: "boom".into(),
+        },
+    ];
+    let mut room = Room::new();
+    room.set_state(state);
+    room.key(Key::Function(4));
+    let grid = room.compose(120, 40);
+    let style_of = |needle: &str| {
+        (0..grid.rows).find_map(|y| {
+            let row: String = grid.row(y).iter().map(|c| c.ch).collect();
+            let x = row.find(needle)?;
+            let col = row[..x].chars().count();
+            Some(grid.row(y)[col].style)
+        })
+    };
+    let green = crate::ui::grid::Style::new(crate::ui::grid::Tone::Agent(1));
+    assert_eq!(style_of("tests pass"), Some(green));
+    // Red stays for what is urgent.
+    assert_eq!(
+        style_of("boom").map(|s| s.tone),
+        Some(crate::ui::grid::Tone::Error)
+    );
+
+    // `:color` takes Portuguese names too, and an agent by name.
+    room.drain();
+    type_line(&mut room, ":color azul");
+    assert!(matches!(&room.drain()[..], [Command::SetColor { color: Some(c), .. }] if c == "blue"));
+    type_line(&mut room, &format!(":color {} none", agent.name));
+    assert!(
+        matches!(&room.drain()[..], [Command::SetColor { agent: a, color: Some(c) }] if *a == agent.id && c == "none")
+    );
+    type_line(&mut room, ":color vermelho");
+    assert!(room.drain().is_empty());
+}

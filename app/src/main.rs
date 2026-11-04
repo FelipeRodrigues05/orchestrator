@@ -23,6 +23,7 @@ fn main() -> glib::ExitCode {
     };
 
     let app = adw::Application::builder().application_id(APP_ID).build();
+    quit_on_signals(&app);
 
     app.connect_startup(|_| {
         // Installed by scripts/install.sh; from a checkout the icon is read from app/data.
@@ -147,5 +148,20 @@ fn init_logging() {
             .with_writer(std::sync::Mutex::new(file))
             .init(),
         None => tracing_subscriber::fmt().with_env_filter(filter).init(),
+    }
+}
+
+/// `kill`, Ctrl+C and a closed terminal quit like the tray's "Quit": the runtime stops
+/// the agents' processes and the tray item goes away, instead of dying mid-flight.
+fn quit_on_signals(app: &adw::Application) {
+    const SIGHUP: i32 = 1;
+    const SIGINT: i32 = 2;
+    const SIGTERM: i32 = 15;
+    for signal in [SIGHUP, SIGINT, SIGTERM] {
+        let app = app.clone();
+        glib_unix::unix_signal_add_local_once(signal, move || {
+            tracing::info!(signal, "quitting on signal");
+            app.quit();
+        });
     }
 }

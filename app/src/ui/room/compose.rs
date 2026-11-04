@@ -8,7 +8,7 @@ use super::format::{clock, format_rtt, format_tokens, lamp_for};
 use super::pages::{draw_help, draw_setup};
 use super::panels::draw_log;
 use super::{
-    ACCENT, Action, Alarm, DIM, ERROR, FAINT, FLASH_FOR, FRAME, MIN_COLS, MIN_ROWS, OK, Room,
+    ACCENT, Action, Alarm, DIM, ERROR, FAINT, FLASH_FOR, FRAME, MIN_COLS, MIN_ROWS, OK, Pane, Room,
     Spans, TEXT, TITLE, View, WARN, s, title, title_right,
 };
 use crate::ui::grid::{Grid, Lines, Rect, Weight, fit, spans_width};
@@ -17,6 +17,7 @@ impl Room {
     /// Lays the whole room out on a `cols` × `rows` grid and records click targets.
     pub fn compose(&mut self, cols: usize, rows: usize) -> Grid {
         self.hits.clear();
+        self.scroll_areas.clear();
         if self
             .flash
             .as_ref()
@@ -78,7 +79,8 @@ impl Room {
                         );
                         self.draw_queue(&mut grid, queue, &state, now, false);
                         title(&mut grid, log.x - 1, log.y - 1, &[s("EVENT LOG", TITLE)]);
-                        draw_log(&mut grid, log, &state, self.pet.name);
+                        draw_log(&mut grid, log, &state, self.pet.name, &mut self.log_scroll);
+                        self.scroll_areas.push((log, Pane::Log));
                     }
                 }
                 View::Agents => {
@@ -107,7 +109,14 @@ impl Room {
                         2,
                         &[s(format!("EVENT LOG ({})", state.log.len()), TITLE)],
                     );
-                    draw_log(&mut grid, layout.main, &state, self.pet.name);
+                    draw_log(
+                        &mut grid,
+                        layout.main,
+                        &state,
+                        self.pet.name,
+                        &mut self.log_scroll,
+                    );
+                    self.scroll_areas.push((layout.main, Pane::Log));
                 }
                 View::Providers => {
                     title(
@@ -118,6 +127,7 @@ impl Room {
                     );
                     draw_setup(&mut grid, layout.main, &state);
                 }
+                View::Reader => self.draw_reader(&mut grid, layout.main, &state),
             }
             self.draw_console(&mut grid, layout.console, layout.console_sep, &state);
         } else {

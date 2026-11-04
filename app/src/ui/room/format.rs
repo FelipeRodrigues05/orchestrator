@@ -7,7 +7,7 @@ use orch_core::model::{Agent, AgentState, AppState, LogLevel};
 use uuid::Uuid;
 
 use super::{ACCENT, DIM, ERROR, OK, SPARK_WIDTH, STOPPED, TEXT, WARN};
-use crate::ui::grid::Style;
+use crate::ui::grid::{Style, Tone};
 
 /// Agents in the order the room shows them: by group, then the ungrouped ones.
 /// Agents of the focused project, group by group.
@@ -111,4 +111,42 @@ pub(super) fn sparkline(state: &AppState, agent: Uuid, now: DateTime<Utc>) -> St
         .iter()
         .map(|&n| BARS[n * (BARS.len() - 1) / max])
         .collect()
+}
+
+/// Agents' colours: `(name, Portuguese name)`, in the order of `render`'s palette.
+pub(in crate::ui) const AGENT_COLORS: [(&str, &str); 10] = [
+    ("cyan", "ciano"),
+    ("green", "verde"),
+    ("yellow", "amarelo"),
+    ("magenta", "magenta"),
+    ("blue", "azul"),
+    ("orange", "laranja"),
+    ("teal", "turquesa"),
+    ("pink", "rosa"),
+    ("purple", "roxo"),
+    ("lime", "lima"),
+];
+
+/// The style an agent's lines are painted in; `None` when it asked for plain text.
+pub(super) fn agent_style(agent: &Agent) -> Option<Style> {
+    let index = match agent.color.as_deref() {
+        Some("none") => return None,
+        Some(name) => AGENT_COLORS.iter().position(|(en, _)| *en == name)?,
+        // Picked from its id: stable, and different agents mostly differ.
+        None => (agent.id.as_u128() % AGENT_COLORS.len() as u128) as usize,
+    };
+    Some(Style::new(Tone::Agent(index as u8)))
+}
+
+/// `verde`, `green` → `Some(Some("green"))`; `auto` → `Some(None)`; `none` → plain.
+pub(super) fn parse_color(name: &str) -> Option<Option<String>> {
+    let name = name.trim().to_lowercase();
+    match name.as_str() {
+        "auto" => Some(None),
+        "none" | "off" | "plain" | "nenhuma" => Some(Some("none".into())),
+        _ => AGENT_COLORS
+            .iter()
+            .find(|(en, pt)| *en == name || *pt == name)
+            .map(|(en, _)| Some((*en).to_owned())),
+    }
 }

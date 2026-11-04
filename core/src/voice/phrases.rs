@@ -30,6 +30,11 @@ pub enum Phrase {
     NoAgent {
         name: String,
     },
+    /// An agent hit its usage limit and goes on with another model.
+    FellBack {
+        agent: String,
+        to: String,
+    },
     /// Already in the right language (the pet's own words, summaries).
     Text(String),
 }
@@ -70,6 +75,10 @@ impl Phrase {
                 format!("Atualizando o {cli} do agente {agent}")
             }
             (Phrase::Updating { cli, agent }, En) => format!("Updating {cli} for agent {agent}"),
+            (Phrase::FellBack { agent, to }, Pt) => {
+                format!("Agente {agent} atingiu o limite; continuando com {to}")
+            }
+            (Phrase::FellBack { agent, to }, En) => format!("Agent {agent} hit its limit; going on with {to}"),
             (Phrase::NoAgent { name }, Pt) => format!("Não achei o agente {name}"),
             (Phrase::NoAgent { name }, En) => format!("I could not find agent {name}"),
             (Phrase::Text(text), _) => text.clone(),

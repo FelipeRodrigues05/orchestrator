@@ -199,6 +199,63 @@ pub fn open_terminal(path: &Path) -> std::io::Result<()> {
     command.current_dir(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| ())
 }
 
+/// Folders searched for git repositories: `ORCH_PROJECT_DIRS` (colon separated), or
+/// the usual places under the home folder that exist.
+pub fn project_dirs() -> Vec<PathBuf> {
+    if let Some(dirs) = std::env::var_os("ORCH_PROJECT_DIRS") {
+        return std::env::split_paths(&dirs).filter(|dir| dir.is_dir()).collect();
+    }
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return Vec::new() };
+    ["www", "code", "Code", "projects", "Projects", "src", "dev", "work", "repos", "git", "Documents"]
+        .iter()
+        .map(|name| home.join(name))
+        .filter(|dir| dir.is_dir())
+        .collect()
+}
+
+/// Git repositories under `roots`, at most `depth` folders down and `limit` in all.
+/// A repository's own folders are not searched (no submodules, no worktrees), nor
+/// hidden folders and dependency caches.
+pub fn git_repositories(roots: &[PathBuf], depth: usize, limit: usize) -> Vec<PathBuf> {
+    const SKIP: [&str; 6] = ["node_modules", "target", "vendor", "dist", "build", "venv"];
+    let mut found = Vec::new();
+    let mut pending: Vec<(PathBuf, usize)> = roots.iter().map(|root| (root.clone(), 0)).collect();
+    while let Some((dir, level)) = pending.pop() {
+        if found.len() >= limit {
+            break;
+        }
+        if dir.join(".git").exists() {
+            found.push(dir);
+            continue;
+        }
+        if level >= depth {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            if is_dir && !name.starts_with('.') && !SKIP.contains(&name.as_ref()) {
+                pending.push((entry.path(), level + 1));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Files tracked by git in `root` (plus untracked, not ignored ones), relative to it.
+pub fn project_files(root: &Path, limit: usize) -> Vec<String> {
+    let output = Command::new("git")
+        .args(["ls-files", "--cached", "--others", "--exclude-standard"])
+        .current_dir(root)
+        .stderr(Stdio::null())
+        .output();
+    let Some(output) = output.ok().filter(|o| o.status.success()) else { return Vec::new() };
+    String::from_utf8_lossy(&output.stdout).lines().take(limit).map(str::to_owned).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +264,17 @@ mod tests {
     fn only_web_and_mail_links_open() {
         assert!(open_url("file:///etc/passwd").is_err());
         assert!(open_url("/usr/bin/rm").is_err());
+    }
+
+    #[test]
+    fn finds_repositories_without_entering_them() {
+        let dir = tempfile::tempdir().unwrap();
+        for repo in ["a/shop", "a/b/api", "deep/1/2/3/4/too-deep", "node_modules/pkg", ".hidden/x"] {
+            std::fs::create_dir_all(dir.path().join(repo).join(".git")).unwrap();
+        }
+        std::fs::create_dir_all(dir.path().join("a/shop/inner/.git")).unwrap();
+        let found = git_repositories(&[dir.path().to_path_buf()], 3, 100);
+        let names: Vec<_> = found.iter().map(|p| p.strip_prefix(dir.path()).unwrap().to_owned()).collect();
+        assert_eq!(names, [PathBuf::from("a/b/api"), PathBuf::from("a/shop")]);
     }
 }
