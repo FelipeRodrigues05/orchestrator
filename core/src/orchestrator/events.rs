@@ -187,6 +187,7 @@ impl Orchestrator {
                     }
                 }
                 self.log(Some(agent_id), LogLevel::Info, &format!("rule learned: {rule}"));
+                self.share_rule(agent_id, &rule);
             }
             BrokerEvent::RuleLearned { scope: RuleScope::Group(group_id), rule } => {
                 if let Some(group) = self.state.groups.iter_mut().find(|g| g.id == group_id) {

@@ -63,6 +63,10 @@ pub struct Agent {
     /// the provider says.
     #[serde(default)]
     pub cost_micros: u64,
+    /// The global agent it is (ADR 0023): its persona, provider, model, colour,
+    /// rules and memory are shared with every agent of the same profile.
+    #[serde(default)]
+    pub profile_id: Option<Uuid>,
     pub worktree: PathBuf,
     pub state: AgentState,
     pub rules: Vec<PermissionRule>,
@@ -113,6 +117,19 @@ impl Provider {
             Provider::Local { model, .. } => model,
         }
     }
+}
+
+/// A global agent (ADR 0023): who it is and how it runs, used in any project. Its
+/// memory lives in a file named after its id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Profile {
+    pub id: Uuid,
+    pub name: String,
+    pub persona: String,
+    pub provider: Provider,
+    pub model: Option<String>,
+    pub color: Option<String>,
+    pub rules: Vec<PermissionRule>,
 }
 
 /// Tokens in an agent's context window, out of its size.
@@ -457,6 +474,8 @@ pub struct AppState {
     pub theme: String,
     /// The operator turned the start-up animation off (`:intro off`).
     pub skip_intro: bool,
+    /// The agent library: global agents usable in any project.
+    pub profiles: Vec<Profile>,
 }
 
 impl AppState {

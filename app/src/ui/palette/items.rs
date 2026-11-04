@@ -20,12 +20,14 @@ impl Palette {
             Mode::NewAgent(wizard) => match wizard.step {
                 Step::Group => self.group_items(state),
                 Step::Provider => self.provider_items(state),
+                Step::Source => library_items(state, true),
                 Step::Persona => self.persona_items(),
                 _ => Vec::new(),
             },
             Mode::SwitchProvider(_) => self.provider_items(state),
             Mode::Model(agent) => self.model_items(state, *agent),
             Mode::Color(agent) => color_items(state, *agent),
+            Mode::Library => library_items(state, false),
             Mode::Theme => {
                 let current = crate::ui::theme::Theme::parse(&state.theme).unwrap_or_default();
                 crate::ui::theme::Theme::ALL
@@ -156,6 +158,15 @@ impl Palette {
             state.theme.as_str()
         };
         items.push(item("Theme", format!("now {theme}"), "", Pick::ChooseTheme));
+        items.push(item(
+            "Agent library",
+            format!(
+                "{} global agents · use one in this project",
+                state.profiles.len()
+            ),
+            "",
+            Pick::Library,
+        ));
         items.push(item(
             "Update agent CLIs",
             "opencode, claude, codex, gemini…",
@@ -488,7 +499,7 @@ pub(super) fn item(
 fn agent_items(agent: &Agent) -> Vec<Item> {
     let running = !matches!(agent.state, AgentState::Stopped | AgentState::Error);
     let verb = if running { "Stop" } else { "Start" };
-    vec![
+    let mut items = vec![
         item(
             format!("{verb} {}", agent.name),
             "",
@@ -555,7 +566,16 @@ fn agent_items(agent: &Agent) -> Vec<Item> {
             "",
             Pick::Merge(agent.id),
         ),
-    ]
+    ];
+    if agent.profile_id.is_none() {
+        items.push(item(
+            format!("Save {} to the library", agent.name),
+            "a global agent: use it in any project, with its memory",
+            "",
+            Pick::SaveToLibrary(agent.id),
+        ));
+    }
+    items
 }
 
 /// Switching to or closing open projects, and planning the focused project's groups.
@@ -653,5 +673,40 @@ fn color_items(state: &AppState, agent: Uuid) -> Vec<Item> {
         "",
         Pick::Color(Some("none".into())),
     ));
+    items
+}
+
+/// The library's agents (`+ new agent` first in the wizard).
+fn library_items(state: &AppState, wizard: bool) -> Vec<Item> {
+    let mut items = Vec::new();
+    if wizard {
+        items.push(item(
+            "+ new agent",
+            "name › provider › task › persona",
+            "",
+            Pick::FromScratch,
+        ));
+    } else if state.profiles.is_empty() {
+        items.push(item(
+            "the library is empty",
+            "save an agent with :save or \"Save … to the library\"",
+            "",
+            Pick::Waiting,
+        ));
+    }
+    items.extend(state.profiles.iter().map(|profile| {
+        let who = if profile.persona.is_empty() {
+            "no persona"
+        } else {
+            profile.persona.as_str()
+        };
+        let detail = format!("{} · {who}", profile.provider.short_name());
+        item(
+            profile.name.clone(),
+            detail,
+            "",
+            Pick::FromLibrary(profile.id),
+        )
+    }));
     items
 }

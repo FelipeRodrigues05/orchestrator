@@ -26,7 +26,18 @@ impl Orchestrator {
                 self.ensure_workspace_group(&group);
                 self.create_agent(&group, &name, provider.as_deref(), &task, &persona);
             }
-            Command::SetPersona { agent, persona } => self.set_persona(agent, &persona),
+            Command::SetPersona { agent, persona } => {
+                self.set_persona(agent, &persona);
+                self.sync_profile(agent);
+            }
+            Command::SaveProfile(agent) => self.save_profile(agent),
+            Command::CreateFromProfile { profile, group, task } => {
+                self.ensure_project().await;
+                self.ensure_workspace_group(&group);
+                self.create_from_profile(profile, &group, &task);
+            }
+            Command::ForgetProfile(name) => self.forget_profile(&name),
+            Command::Remember { agent, note } => self.remember(agent, &note, None),
             Command::SetColor { agent, color } => {
                 let Some(target) = self.agent_mut(agent) else { return };
                 target.color = color;
@@ -35,8 +46,12 @@ impl Orchestrator {
                     store.save_agent(&snapshot);
                 }
                 self.dirty = true;
+                self.sync_profile(agent);
             }
-            Command::SetModel { agent, model } => self.set_model(agent, model.trim()),
+            Command::SetModel { agent, model } => {
+                self.set_model(agent, model.trim());
+                self.sync_profile(agent);
+            }
             Command::ProbeModels(agent) => self.probe_models(agent),
             Command::SetFallback(text) => self.set_fallback(&text),
             Command::SetCompactAt(percent) => {
@@ -77,7 +92,10 @@ impl Orchestrator {
                 self.state.theme = theme;
                 self.dirty = true;
             }
-            Command::SetProvider { agent, provider } => self.set_provider(agent, &provider),
+            Command::SetProvider { agent, provider } => {
+                self.set_provider(agent, &provider);
+                self.sync_profile(agent);
+            }
             Command::SetGroupLimit { group, limit } => self.set_group_limit(&group, limit),
             Command::OpenEmail => self.open_email().await,
             Command::OpenTerminal(agent) => self.open_terminal(agent),

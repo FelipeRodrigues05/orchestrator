@@ -201,32 +201,37 @@ impl Orchestrator {
         }
     }
 
-    pub(super) fn create_agent(&mut self, group: &str, name: &str, provider: Option<&str>, task: &str, persona: &str) {
+    pub(super) fn create_agent(
+        &mut self,
+        group: &str,
+        name: &str,
+        provider: Option<&str>,
+        task: &str,
+        persona: &str,
+    ) -> Option<Uuid> {
         if self.state.projects.is_empty() {
             self.notice(LogLevel::Warn, "open a project first: :open <path>");
-            return;
+            return None;
         }
         let Some(group) = self.find_group(group).cloned() else {
             self.notice(LogLevel::Warn, format!("no group named {group}; create it with :group"));
-            return;
+            return None;
         };
         let name = name.trim().to_owned();
         if name.is_empty() || task.trim().is_empty() {
             self.notice(LogLevel::Warn, "usage: :new <group> <name> [provider]: <task>");
-            return;
+            return None;
         }
         if self.state.agents.iter().any(|a| a.group_id == group.id && normalize(&a.name) == normalize(&name)) {
             self.notice(LogLevel::Warn, format!("{name} already exists in {}", group.name));
-            return;
+            return None;
         }
         let Some(provider) = self.find_provider(provider) else {
             let labels: Vec<_> = self.state.providers.iter().map(|p| p.label.as_str()).collect();
             self.notice(LogLevel::Warn, format!("unknown provider; available: {}", labels.join(", ")));
-            return;
+            return None;
         };
-        let Some(project) = self.state.project_of_group(group.id).cloned() else {
-            return;
-        };
+        let project = self.state.project_of_group(group.id).cloned()?;
         let id = Uuid::new_v4();
         let agent = Agent {
             id,
@@ -240,6 +245,7 @@ impl Orchestrator {
             color: None,
             context: None,
             cost_micros: 0,
+            profile_id: None,
             provider,
             state: AgentState::Stopped,
             rules: Vec::new(),
@@ -259,5 +265,6 @@ impl Orchestrator {
         self.state.agents.push(agent);
         self.selected = Some(id);
         self.notice(LogLevel::Info, text);
+        Some(id)
     }
 }

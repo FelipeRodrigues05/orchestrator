@@ -13,10 +13,12 @@ use uuid::Uuid;
 pub const ASK_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 pub const LIST: &str = "list_agents";
 pub const ASK: &str = "ask_agent";
+pub const REMEMBER: &str = "remember";
 
 pub(crate) enum TeamRequest {
     Roster { from: Uuid, reply: oneshot::Sender<String> },
     Ask { from: Uuid, to: String, message: String, reply: oneshot::Sender<Result<String, String>> },
+    Remember { from: Uuid, note: String, reply: oneshot::Sender<Result<String, String>> },
 }
 
 #[derive(Clone)]
@@ -53,6 +55,15 @@ impl TeamHandle {
         let text = |key: &str| input.get(key).and_then(Value::as_str).map(str::trim).unwrap_or_default().to_owned();
         match name {
             LIST => Some(Ok(self.roster(from).await)),
+            REMEMBER => {
+                let note = text("note");
+                if note.is_empty() {
+                    return Some(Err("remember needs a `note`".into()));
+                }
+                let (reply, answer) = oneshot::channel();
+                let _ = self.tx.send(TeamRequest::Remember { from, note, reply });
+                Some(answer.await.unwrap_or_else(|_| Err("the orchestrator is not running".into())))
+            }
             ASK => {
                 let (to, message) = (text("agent"), text("message"));
                 if to.is_empty() || message.is_empty() {
@@ -68,6 +79,14 @@ impl TeamHandle {
 /// `(name, description, JSON schema)` of the team tools.
 pub fn tools() -> Vec<(&'static str, &'static str, Value)> {
     vec![
+        (
+            REMEMBER,
+            "Writes down something worth knowing in later tasks, in any project: the operator's preferences, \
+             conventions, a lesson learnt. One short fact per call; your notes come back in your next briefings.",
+            json!({ "type": "object", "properties": {
+                "note": { "type": "string", "description": "one short fact, e.g. \"the operator prefers Pest over PHPUnit\"" }
+            }, "required": ["note"] }),
+        ),
         (
             LIST,
             "Lists the other agents of your project: name, group, persona, task and whether they are working now.",
@@ -90,5 +109,5 @@ pub fn tools() -> Vec<(&'static str, &'static str, Value)> {
 /// is one of ours. Talking to a teammate needs no permission.
 pub fn is_team_tool(tool: &str) -> bool {
     let tool = tool.to_ascii_lowercase();
-    tool.ends_with(ASK) || tool.ends_with(LIST)
+    tool.ends_with(ASK) || tool.ends_with(LIST) || tool.ends_with(REMEMBER)
 }

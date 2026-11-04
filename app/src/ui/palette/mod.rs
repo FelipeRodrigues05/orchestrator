@@ -66,6 +66,8 @@ enum Mode {
     DeleteKey,
     /// Pick the room's colour theme.
     Theme,
+    /// The agent library: pick one to put to work here.
+    Library,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -77,6 +79,8 @@ struct Wizard {
     name: Option<String>,
     provider: Option<String>,
     task: Option<String>,
+    /// A library agent chosen instead of a new one: it brings name, provider and persona.
+    profile: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -84,6 +88,8 @@ enum Step {
     #[default]
     Group,
     GroupGoal,
+    /// A new agent, or one from the library.
+    Source,
     Name,
     Provider,
     Task,
@@ -135,6 +141,12 @@ enum Pick {
     Model(String),
     /// A placeholder while something is on its way.
     Waiting,
+    /// In the wizard: a new agent, or this one from the library.
+    FromScratch,
+    FromLibrary(Uuid),
+    /// Open the library (and pick one to put to work).
+    Library,
+    SaveToLibrary(Uuid),
     ChooseColor(Uuid),
     DeleteKeys,
     ChooseTheme,
@@ -204,6 +216,15 @@ impl Palette {
         }
     }
 
+    /// The agent library: pick one to put to work here.
+    pub fn library() -> Self {
+        Self {
+            mode: Mode::Library,
+            query: String::new(),
+            cursor: 0,
+        }
+    }
+
     fn to(&mut self, mode: Mode) {
         self.mode = mode;
         self.query.clear();
@@ -255,8 +276,10 @@ impl Palette {
                 let (step, restore) = match wizard.step {
                     Step::Group => return false,
                     Step::GroupGoal => (Step::Group, wizard.new_group.take()),
-                    Step::Name => (Step::Group, wizard.group.take()),
+                    Step::Source => (Step::Group, wizard.group.take()),
+                    Step::Name => (Step::Source, None),
                     Step::Provider => (Step::Name, wizard.name.take()),
+                    Step::Task if wizard.profile.take().is_some() => (Step::Source, None),
                     Step::Task => (Step::Provider, wizard.provider.take()),
                     Step::Persona => (Step::Task, wizard.task.take()),
                 };
@@ -333,13 +356,27 @@ impl Palette {
             if text.is_empty() && !optional {
                 return Outcome::Keep;
             }
-            return self.submit_text(text);
+            let outcome = self.submit_text(text);
+            self.skip_empty_library(state);
+            return outcome;
         }
         let list = self.filtered(state, selected);
         let Some((item, _)) = list.get(self.cursor.min(list.len().saturating_sub(1))) else {
             return Outcome::Keep;
         };
-        self.pick(item.pick.clone(), selected)
+        let outcome = self.pick(item.pick.clone(), selected);
+        self.skip_empty_library(state);
+        outcome
+    }
+
+    /// With nothing in the library there is nothing to choose: straight to the name.
+    fn skip_empty_library(&mut self, state: &AppState) {
+        if let Mode::NewAgent(wizard) = &mut self.mode
+            && wizard.step == Step::Source
+            && state.profiles.is_empty()
+        {
+            wizard.step = Step::Name;
+        }
     }
 
     /// Index in the filtered list of the `n`th visible row.

@@ -38,3 +38,4 @@ architecture looks the way it does.
 | [0020](0020-model-router-on-usage-limits.md) | Model router: fall back to the closest model on usage limits | Accepted |
 | [0021](0021-colour-themes.md) | Colour themes | Accepted |
 | [0022](0022-start-up-animation.md) | Start-up animation | Accepted |
+| [0023](0023-agent-library-and-memory.md) | Agent library (global agents) and memory | Accepted |

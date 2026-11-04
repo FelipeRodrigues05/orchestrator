@@ -43,6 +43,7 @@ impl Palette {
             Mode::Color(_) => vec![s("COLOR", TITLE)],
             Mode::DeleteKey => vec![s("DELETE API KEY", TITLE)],
             Mode::Theme => vec![s("THEME", TITLE)],
+            Mode::Library => vec![s("AGENT LIBRARY", TITLE)],
             Mode::ApiKey => vec![s("API KEY", TITLE)],
             Mode::OpenIn => vec![s("OPEN IN EDITOR", TITLE)],
             Mode::SwitchProvider(_) => vec![s("SWITCH PROVIDER", TITLE)],
@@ -61,6 +62,10 @@ impl Palette {
             ),
             Mode::NewAgent(w) => match w.step {
                 Step::Group => ("group", "pick a group, or type a new name"),
+                Step::Source => (
+                    "agent",
+                    "a new one, or one from your library (it brings its persona and memory)",
+                ),
                 Step::GroupGoal => (
                     "goal",
                     "optional: context every agent of the group gets · Enter skips",
@@ -87,6 +92,10 @@ impl Palette {
             ),
             Mode::Mention(_) => ("file", "type part of its name or path · Esc keeps the @"),
             Mode::Theme => ("theme", "the room's colours · red stays for what is urgent"),
+            Mode::Library => (
+                "agent",
+                "pick one to put to work here · :forget <name> removes one",
+            ),
             Mode::DeleteKey => (
                 "service",
                 "its key leaves the Secret Service; :key <service> stores a new one",

@@ -42,6 +42,7 @@ fn room() -> Room {
             .collect(),
         sandbox: false,
         workspace: home.path().join("personal"),
+        memory: home.path().join("memory"),
     };
     let (commands, rx) = async_channel::unbounded();
     let (tx, events) = async_channel::unbounded();
@@ -429,4 +430,43 @@ async fn folders_without_git_are_worked_in_directly() {
     // Nothing to merge without git, and the reason is said.
     room.send(Command::Merge(kio)).await;
     room.until(|s| s.log.iter().any(|e| e.text.contains("nothing to merge"))).await;
+}
+
+#[tokio::test]
+async fn a_global_agent_brings_its_memory_rules_and_persona_to_another_project() {
+    let room = room();
+    let state = room.staffed().await;
+    let tests = state.agents.iter().find(|a| a.name == "Tests").unwrap().id;
+    // It learns something, then joins the library.
+    room.send(Command::Message { agent: tests, text: "note:the operator prefers Pest".into() }).await;
+    room.until(|s| agent_lines(s, tests).iter().any(|l| l.starts_with("noted"))).await;
+    room.send(Command::SetPersona { agent: tests, persona: "tests only".into() }).await;
+    room.send(Command::SaveProfile(tests)).await;
+    let state = room.until(|s| s.profiles.len() == 1).await;
+    let profile = state.profiles[0].clone();
+    assert_eq!((profile.name.as_str(), profile.persona.as_str()), ("Tests", "tests only"));
+
+    // In another project it is the same agent, with what it remembers.
+    let other = git_repo();
+    room.send(Command::OpenProject { root: other.path().into() }).await;
+    room.until(|s| s.projects.len() == 2).await;
+    room.send(Command::CreateGroup { name: "Web".into(), goal: String::new() }).await;
+    room.send(Command::CreateFromProfile { profile: profile.id, group: "Web".into(), task: "test the shop".into() })
+        .await;
+    let state = room.until(|s| s.agents.iter().filter(|a| a.profile_id == Some(profile.id)).count() == 2).await;
+    let twin = state.agents.iter().find(|a| a.profile_id == Some(profile.id) && a.id != tests).unwrap().id;
+    room.send(Command::StartAgent(twin)).await;
+    let state = room.until(|s| agent_lines(s, twin).iter().any(|l| l.starts_with("echo:"))).await;
+    let briefing = agent_lines(&state, twin).join("\n");
+    assert!(briefing.contains("Who you are: tests only"), "{briefing}");
+    assert!(briefing.contains("the operator prefers Pest"), "{briefing}");
+
+    // A change in one place reaches its twin and the library.
+    room.send(Command::SetColor { agent: twin, color: Some("pink".into()) }).await;
+    room.until(|s| s.agent(tests).is_some_and(|a| a.color.as_deref() == Some("pink"))).await;
+
+    // Forgotten: the agents stay.
+    room.send(Command::ForgetProfile("tests".into())).await;
+    let state = room.until(|s| s.profiles.is_empty()).await;
+    assert_eq!(state.agents.iter().filter(|a| a.profile_id == Some(profile.id)).count(), 2);
 }

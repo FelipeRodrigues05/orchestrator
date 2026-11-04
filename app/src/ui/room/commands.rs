@@ -45,6 +45,7 @@ impl Room {
                 }
             }
             "persona" => self.persona_command(rest),
+            "library" | "lib" | "save" | "forget" | "remember" => self.library_command(&word, rest),
             "color" | "colour" | "cor" => self.color_command(rest),
             "intro" => match rest {
                 "on" => self.outbox.push(Command::SetIntro(true)),
@@ -223,6 +224,33 @@ impl Room {
             (Some(id), "close") => self.outbox.push(Command::CloseProject(id)),
             (Some(id), _) => self.outbox.push(Command::FocusProject(id)),
             (None, _) => self.say(&format!("no open project named {rest}"), WARN),
+        }
+    }
+
+    /// The agent library (ADR 0023): `:library`, `:save [agent]`, `:forget <name>`,
+    /// `:remember [agent]: <note>`.
+    fn library_command(&mut self, word: &str, rest: &str) {
+        match word {
+            "save" => match self.target(rest) {
+                Some(agent) => self.outbox.push(Command::SaveProfile(agent)),
+                None => self.say("usage: :save [agent] (puts it in the library)", WARN),
+            },
+            "forget" if rest.is_empty() => self.say("usage: :forget <library agent>", WARN),
+            "forget" => self.outbox.push(Command::ForgetProfile(rest.to_owned())),
+            "remember" => self.remember_command(rest),
+            _ => self.palette = Some(Palette::library()),
+        }
+    }
+
+    /// `:remember Back: the API returns cents` (the selected agent without a name).
+    fn remember_command(&mut self, rest: &str) {
+        let (name, note) = rest.split_once(':').unwrap_or(("", rest));
+        match (self.target(name.trim()), note.trim()) {
+            (Some(agent), note) if !note.is_empty() => self.outbox.push(Command::Remember {
+                agent,
+                note: note.to_owned(),
+            }),
+            _ => self.say("usage: :remember [agent]: <note>", WARN),
         }
     }
 

@@ -12,7 +12,11 @@ impl Palette {
                 Step::GroupGoal => {
                     let name = wizard.new_group.take().unwrap_or_default();
                     wizard.group = Some(name.clone());
-                    wizard.step = Step::Name;
+                    wizard.step = if wizard.profile.is_some() {
+                        Step::Task
+                    } else {
+                        Step::Source
+                    };
                     self.query.clear();
                     Outcome::Send(Command::CreateGroup { name, goal: text })
                 }
@@ -22,6 +26,13 @@ impl Palette {
                     self.query.clear();
                     self.cursor = 0;
                     Outcome::Keep
+                }
+                Step::Task if wizard.profile.is_some() => {
+                    Outcome::Done(Command::CreateFromProfile {
+                        profile: wizard.profile.unwrap_or_default(),
+                        group: wizard.group.clone().unwrap_or_default(),
+                        task: text,
+                    })
                 }
                 Step::Task => {
                     wizard.task = Some(text);
@@ -127,15 +138,12 @@ impl Palette {
                 Outcome::Keep
             }
             Pick::Help => Outcome::Help,
-            Pick::Group(name) => {
-                if let Mode::NewAgent(wizard) = &mut self.mode {
-                    wizard.group = Some(name);
-                    wizard.step = Step::Name;
-                }
-                self.query.clear();
-                self.cursor = 0;
+            Pick::Group(_) | Pick::FromScratch | Pick::FromLibrary(_) => self.wizard_pick(pick),
+            Pick::Library => {
+                self.to(Mode::Library);
                 Outcome::Keep
             }
+            Pick::SaveToLibrary(agent) => Outcome::Done(Command::SaveProfile(agent)),
             Pick::CreateGroup(name) => {
                 if let Mode::NewAgent(wizard) = &mut self.mode {
                     wizard.new_group = Some(name);
@@ -188,6 +196,52 @@ impl Palette {
                 self.to(Mode::PetModel);
                 Outcome::Keep
             }
+        }
+    }
+
+    /// The new-agent wizard's choices: the group, then a new agent or a library one.
+    fn wizard_pick(&mut self, pick: Pick) -> Outcome {
+        match pick {
+            Pick::Group(name) => {
+                if let Mode::NewAgent(wizard) = &mut self.mode {
+                    wizard.group = Some(name);
+                    // A library agent chosen beforehand only needs its task here.
+                    wizard.step = if wizard.profile.is_some() {
+                        Step::Task
+                    } else {
+                        Step::Source
+                    };
+                }
+                self.query.clear();
+                self.cursor = 0;
+                Outcome::Keep
+            }
+            Pick::FromScratch => {
+                if let Mode::NewAgent(wizard) = &mut self.mode {
+                    wizard.step = Step::Name;
+                }
+                self.query.clear();
+                self.cursor = 0;
+                Outcome::Keep
+            }
+            Pick::FromLibrary(profile) if !matches!(self.mode, Mode::NewAgent(_)) => {
+                // From the library: the wizard asks only for the group and the task.
+                self.to(Mode::NewAgent(Wizard {
+                    profile: Some(profile),
+                    ..Wizard::default()
+                }));
+                Outcome::Keep
+            }
+            Pick::FromLibrary(profile) => {
+                if let Mode::NewAgent(wizard) = &mut self.mode {
+                    wizard.profile = Some(profile);
+                    wizard.step = Step::Task;
+                }
+                self.query.clear();
+                self.cursor = 0;
+                Outcome::Keep
+            }
+            _ => Outcome::Keep,
         }
     }
 }

@@ -4,6 +4,7 @@
 mod agents;
 mod commands;
 mod events;
+mod library;
 mod operator;
 mod projects;
 mod settings;
@@ -73,6 +74,21 @@ pub enum Command {
     SetFallback(String),
     /// Context fill (percent) at which agents go on with a summary; `None`: never.
     SetCompactAt(Option<u64>),
+    /// Puts the agent in the library as a global agent (ADR 0023).
+    SaveProfile(Uuid),
+    /// A library agent at work in a group of the focused project.
+    CreateFromProfile {
+        profile: Uuid,
+        group: String,
+        task: String,
+    },
+    /// Takes an agent out of the library by name.
+    ForgetProfile(String),
+    /// A note for the agent's memory.
+    Remember {
+        agent: Uuid,
+        note: String,
+    },
     /// The room's colour theme, by name; saved for the next start.
     SetTheme(String),
     /// Whether the start-up animation plays.
@@ -210,6 +226,8 @@ pub struct Config {
     pub sandbox: bool,
     /// The personal workspace: the project agents go to when none is open.
     pub workspace: PathBuf,
+    /// Where agents' memories live (one Markdown file each).
+    pub memory: PathBuf,
 }
 
 impl Default for Config {
@@ -223,6 +241,7 @@ impl Default for Config {
             providers: Vec::new(),
             sandbox: true,
             workspace: crate::voice::data_dir().join("personal"),
+            memory: crate::voice::data_dir().join("memory"),
         }
     }
 }
@@ -304,6 +323,8 @@ struct Orchestrator {
     compact_at: Option<u64>,
     /// Picks another model when an agent hits its usage limit.
     router: crate::router::Router,
+    /// Agents' memories (`Config::memory`).
+    memory_dir: PathBuf,
     /// The personal workspace (`Config::workspace`).
     workspace: PathBuf,
     /// Handed to runners: `list_agents` and `ask_agent`.
@@ -383,6 +404,7 @@ pub async fn run_with(
         waiting: Vec::new(),
         layouts: HashMap::new(),
         workspace: config.workspace,
+        memory_dir: config.memory,
         router: crate::router::Router::default(),
         cost_base: HashMap::new(),
         compact_at: Some(COMPACT_AT),
@@ -449,6 +471,7 @@ impl Orchestrator {
             voice.set_voice(Some(id));
         }
         self.state.skip_intro = store.setting("intro").await.as_deref() == Some("off");
+        self.state.profiles = store.profiles().await;
         if let Some(theme) = store.setting("theme").await {
             self.state.theme = theme;
         }

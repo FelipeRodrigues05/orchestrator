@@ -6,141 +6,153 @@ use super::format::format_tokens;
 use super::{ACCENT, DIM, FAINT, OK, TEXT, TITLE, WARN, s, title};
 use crate::ui::grid::{Grid, Lines, Rect, Style, Weight, fit};
 
+/// Every key and command, for `?`.
+const HELP: [(&str, &str); 51] = [
+    (
+        "Enter / i",
+        "message the selected agent (or \"agente X: …\")",
+    ),
+    (
+        ": / Ctrl+P / Space",
+        "command palette (type a :command there too)",
+    ),
+    ("n", "new agent wizard"),
+    ("o", "open a project: recent, found on disk, or Browse…"),
+    ("@ in a message", "mention a file of the project (or @pet)"),
+    (
+        "Shift+Enter  ←→↑↓",
+        "new line · move in a message (long ones open an editor)",
+    ),
+    (
+        "F1-F6  1-6",
+        "overview · agents · perms · log · setup · read",
+    ),
+    ("r", "read the selected agent's conversation full screen"),
+    ("j k  ↓ ↑", "select agent · s start/stop · e open in editor"),
+    (
+        "a  l  g  d",
+        "allow · always (agent) · always (group) · deny",
+    ),
+    ("c", "acknowledge the caution light"),
+    (
+        "PgUp PgDn  wheel",
+        "scroll the console · Shift: the event log · End: newest",
+    ),
+    ("Alt+1-9  [ ]", "switch between open projects"),
+    ("Ctrl+Space", "hold to talk"),
+    ("", ""),
+    (
+        ":open <path>",
+        "open a git repository (next to the open ones)",
+    ),
+    (
+        ":project <n>  :close",
+        "focus an open project · close the focused one",
+    ),
+    (
+        ":group <n>[: <goal>]",
+        "create a group (the goal is optional)",
+    ),
+    (
+        ":new <g> <n> [p]: <task>",
+        "create an agent (p = provider label, F5) · \" | persona\"",
+    ),
+    (
+        ":color [agent] <color>",
+        "its lines and name in a colour · auto · none",
+    ),
+    (
+        ":save [agent] · :library",
+        "a global agent, for any project · pick one",
+    ),
+    (":forget <name>", "take an agent out of the library"),
+    (
+        ":remember [agent]: <note>",
+        "add to its memory (it reads it in every task)",
+    ),
+    (":theme <name>", "mono · amber · green · nord · light"),
+    (":intro on|off", "the start-up animation (any key skips it)"),
+    (
+        ":persona [agent]: <who>",
+        "who the agent is; agents ask teammates with ask_agent",
+    ),
+    (":start/:stop [agent]", "run or stop an agent"),
+    (":remove <agent>", "forget an agent (its worktree stays)"),
+    (
+        ":edit [editor]",
+        "open the agent's worktree · :edit project",
+    ),
+    (
+        ":key <service> [delete]",
+        "store an API key in the Secret Service (paste with Ctrl+V) · or remove it",
+    ),
+    (
+        ":compact <n%|off>",
+        "context fill at which agents go on with a summary (85%)",
+    ),
+    (
+        ":model [id]  :fallback",
+        "the agent's model · order on usage limits (auto, reset)",
+    ),
+    (
+        ":provider <p|svc/model>",
+        "switch the agent mid-task · :update CLIs",
+    ),
+    (
+        "@pet … / :pet <model>",
+        "ask the pet · choose the model it thinks with",
+    ),
+    (
+        ":pet float / :pet dock",
+        "the pet walks on your desktop (layer-shell)",
+    ),
+    (
+        ":wake on|off",
+        "say \"ei <pet>\" instead of holding Ctrl+Space",
+    ),
+    (
+        ":lang pt|en  :voice [id]",
+        "language of speech and the pet · Piper voice",
+    ),
+    (
+        ":email [url]  :term",
+        "open your email (or set webmail) · a terminal",
+    ),
+    (
+        ":allow <Rule>",
+        "e.g. :allow Bash(cargo test:*) for the agent",
+    ),
+    (
+        ":timeout <min>",
+        "how long a request waits before it is denied",
+    ),
+    (
+        ":limit <group> <n|off>",
+        "at most n agents of the group working at once",
+    ),
+    (
+        ":voice install",
+        "download the whisper model and the pt_BR voice",
+    ),
+    (
+        ":sandbox on|off",
+        "bubblewrap: agents only write their worktree",
+    ),
+    (":merge [agent]", "commit its worktree and merge its branch"),
+    (":lead <group> [n]", "the pet splits the goal into n agents"),
+    (":view <name>  :ping", "switch view · runtime round trip"),
+    ("", ""),
+    (
+        "permitir / sempre / negar",
+        "spoken or typed: answer the open request",
+    ),
+    ("resumo", "the pet reads the room state out loud"),
+    ("grupo X, agente Y: …", "send to a named agent"),
+    ("? Esc", "close this help"),
+];
+
 pub(super) fn draw_help(grid: &mut Grid) {
-    let lines: [(&str, &str); 48] = [
-        (
-            "Enter / i",
-            "message the selected agent (or \"agente X: …\")",
-        ),
-        (
-            ": / Ctrl+P / Space",
-            "command palette (type a :command there too)",
-        ),
-        ("n", "new agent wizard"),
-        ("o", "open a project: recent, found on disk, or Browse…"),
-        ("@ in a message", "mention a file of the project (or @pet)"),
-        (
-            "Shift+Enter  ←→↑↓",
-            "new line · move in a message (long ones open an editor)",
-        ),
-        (
-            "F1-F6  1-6",
-            "overview · agents · perms · log · setup · read",
-        ),
-        ("r", "read the selected agent's conversation full screen"),
-        ("j k  ↓ ↑", "select agent · s start/stop · e open in editor"),
-        (
-            "a  l  g  d",
-            "allow · always (agent) · always (group) · deny",
-        ),
-        ("c", "acknowledge the caution light"),
-        (
-            "PgUp PgDn  wheel",
-            "scroll the console · Shift: the event log · End: newest",
-        ),
-        ("Alt+1-9  [ ]", "switch between open projects"),
-        ("Ctrl+Space", "hold to talk"),
-        ("", ""),
-        (
-            ":open <path>",
-            "open a git repository (next to the open ones)",
-        ),
-        (
-            ":project <n>  :close",
-            "focus an open project · close the focused one",
-        ),
-        (
-            ":group <n>[: <goal>]",
-            "create a group (the goal is optional)",
-        ),
-        (
-            ":new <g> <n> [p]: <task>",
-            "create an agent (p = provider label, F5) · \" | persona\"",
-        ),
-        (
-            ":color [agent] <color>",
-            "its lines and name in a colour · auto · none",
-        ),
-        (":theme <name>", "mono · amber · green · nord · light"),
-        (":intro on|off", "the start-up animation (any key skips it)"),
-        (
-            ":persona [agent]: <who>",
-            "who the agent is; agents ask teammates with ask_agent",
-        ),
-        (":start/:stop [agent]", "run or stop an agent"),
-        (":remove <agent>", "forget an agent (its worktree stays)"),
-        (
-            ":edit [editor]",
-            "open the agent's worktree · :edit project",
-        ),
-        (
-            ":key <service> [delete]",
-            "store an API key in the Secret Service (paste with Ctrl+V) · or remove it",
-        ),
-        (
-            ":compact <n%|off>",
-            "context fill at which agents go on with a summary (85%)",
-        ),
-        (
-            ":model [id]  :fallback",
-            "the agent's model · order on usage limits (auto, reset)",
-        ),
-        (
-            ":provider <p|svc/model>",
-            "switch the agent mid-task · :update CLIs",
-        ),
-        (
-            "@pet … / :pet <model>",
-            "ask the pet · choose the model it thinks with",
-        ),
-        (
-            ":pet float / :pet dock",
-            "the pet walks on your desktop (layer-shell)",
-        ),
-        (
-            ":wake on|off",
-            "say \"ei <pet>\" instead of holding Ctrl+Space",
-        ),
-        (
-            ":lang pt|en  :voice [id]",
-            "language of speech and the pet · Piper voice",
-        ),
-        (
-            ":email [url]  :term",
-            "open your email (or set webmail) · a terminal",
-        ),
-        (
-            ":allow <Rule>",
-            "e.g. :allow Bash(cargo test:*) for the agent",
-        ),
-        (
-            ":timeout <min>",
-            "how long a request waits before it is denied",
-        ),
-        (
-            ":limit <group> <n|off>",
-            "at most n agents of the group working at once",
-        ),
-        (
-            ":voice install",
-            "download the whisper model and the pt_BR voice",
-        ),
-        (
-            ":sandbox on|off",
-            "bubblewrap: agents only write their worktree",
-        ),
-        (":merge [agent]", "commit its worktree and merge its branch"),
-        (":lead <group> [n]", "the pet splits the goal into n agents"),
-        (":view <name>  :ping", "switch view · runtime round trip"),
-        ("", ""),
-        (
-            "permitir / sempre / negar",
-            "spoken or typed: answer the open request",
-        ),
-        ("resumo", "the pet reads the room state out loud"),
-        ("grupo X, agente Y: …", "send to a named agent"),
-        ("? Esc", "close this help"),
-    ];
+    let lines = HELP;
     let w = 78.min(grid.cols - 4);
     let h = (lines.len() + 4).min(grid.rows - 2);
     let rect = Rect::new((grid.cols - w) / 2, (grid.rows - h) / 2, w, h);

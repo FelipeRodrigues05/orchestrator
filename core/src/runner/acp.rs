@@ -497,6 +497,7 @@ mod tests {
             color: None,
             context: None,
             cost_micros: 0,
+            profile_id: None,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();
@@ -550,6 +551,7 @@ mod tests {
             color: None,
             context: None,
             cost_micros: 0,
+            profile_id: None,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();
@@ -587,6 +589,9 @@ mod tests {
                     crate::team::TeamRequest::Roster { reply, .. } => {
                         let _ = reply.send("- Backend (group API, Running): owns the /pix endpoint".into());
                     }
+                    crate::team::TeamRequest::Remember { reply, .. } => {
+                        let _ = reply.send(Ok("noted".into()));
+                    }
                     crate::team::TeamRequest::Ask { to, message, reply, .. } => {
                         let _ = reply.send(Ok("POST /pix answers 201 with the charge id ZX-4471".into()));
                         return Some((to, message));
@@ -620,6 +625,7 @@ mod tests {
             color: None,
             context: None,
             cost_micros: 0,
+            profile_id: None,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();
@@ -682,6 +688,7 @@ mod tests {
             color: None,
             context: None,
             cost_micros: 0,
+            profile_id: None,
         };
         let mut runner = AcpRunner::new(context);
         runner.start(&agent, "").await.unwrap();

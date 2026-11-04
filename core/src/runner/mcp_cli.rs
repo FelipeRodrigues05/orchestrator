@@ -354,6 +354,7 @@ mod smoke {
             color: None,
             context: None,
             cost_micros: 0,
+            profile_id: None,
         };
         let mut runner = McpCliRunner::new(context);
         runner.start(&agent, "").await.unwrap();

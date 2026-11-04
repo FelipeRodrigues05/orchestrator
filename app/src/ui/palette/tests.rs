@@ -260,3 +260,56 @@ fn delete_api_key_lists_the_stored_ones() {
         Outcome::Done(Command::DeleteApiKey("anthropic".into()))
     );
 }
+
+fn with_library() -> (orch_core::model::AppState, Uuid) {
+    let mut state = sample_state();
+    let id = Uuid::new_v4();
+    state.profiles.push(orch_core::model::Profile {
+        id,
+        name: "Marketer".into(),
+        persona: "a marketing specialist".into(),
+        provider: state.agents[0].provider.clone(),
+        model: None,
+        color: None,
+        rules: Vec::new(),
+    });
+    (state, id)
+}
+
+#[test]
+fn wizard_puts_a_library_agent_to_work() {
+    let (state, profile) = with_library();
+    let mut palette = Palette::new_agent();
+    typed(&mut palette, "fro");
+    palette.enter(&state, None);
+    // A new one, or one from the library.
+    typed(&mut palette, "mark");
+    assert_eq!(palette.enter(&state, None), Outcome::Keep);
+    typed(&mut palette, "launch copy");
+    assert_eq!(
+        palette.enter(&state, None),
+        Outcome::Done(Command::CreateFromProfile {
+            profile,
+            group: "Front".into(),
+            task: "launch copy".into(),
+        })
+    );
+}
+
+#[test]
+fn the_library_starts_the_wizard_with_its_agent() {
+    let (state, profile) = with_library();
+    let mut palette = Palette::library();
+    palette.enter(&state, None);
+    typed(&mut palette, "fro");
+    palette.enter(&state, None);
+    typed(&mut palette, "launch copy");
+    assert_eq!(
+        palette.enter(&state, None),
+        Outcome::Done(Command::CreateFromProfile {
+            profile,
+            group: "Front".into(),
+            task: "launch copy".into(),
+        })
+    );
+}

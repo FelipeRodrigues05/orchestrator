@@ -198,6 +198,11 @@ only write inside their worktree.
 - Agents of a project see each other. One can ask another with the `ask_agent`
   tool: the backend agent asks the integration agent to check the front end.
 - `:persona Back: backend only; asks Integration about the UI` sets who an agent is.
+- `:save` puts the selected agent in the **library**: a global agent you can use in
+  any project (`n`, then pick it after the group, or `:library`). It keeps its
+  persona, model and permissions, and its **memory**: notes it writes with its
+  `remember` tool, or you with `:remember Back: prices are in cents`. `:forget
+  <name>` takes it out of the library.
 - `:lead API 3` asks the pet to split the group's goal into three agents.
 
 ### 8. Finish the work

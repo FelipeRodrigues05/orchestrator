@@ -14,7 +14,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::model::{Agent, AgentState, Group, PermissionRule, Project, Provider};
+use crate::model::{Agent, AgentState, Group, PermissionRule, Profile, Project, Provider};
 
 pub struct LoadedProject {
     pub project: Project,
@@ -56,6 +56,11 @@ enum Op {
     },
     /// The project was opened now (for the recent list).
     Opened(Uuid),
+    SaveProfile(Box<Profile>),
+    DeleteProfile(Uuid),
+    Profiles {
+        reply: oneshot::Sender<Vec<Profile>>,
+    },
     Recent {
         limit: usize,
         reply: oneshot::Sender<Vec<PathBuf>>,
@@ -136,6 +141,21 @@ impl Store {
     }
 
     /// Roots of the projects opened most recently, newest first.
+    pub fn save_profile(&self, profile: &Profile) {
+        self.send(Op::SaveProfile(Box::new(profile.clone())));
+    }
+
+    pub fn delete_profile(&self, id: Uuid) {
+        self.send(Op::DeleteProfile(id));
+    }
+
+    /// The agent library, by name.
+    pub async fn profiles(&self) -> Vec<Profile> {
+        let (reply, profiles) = oneshot::channel();
+        self.send(Op::Profiles { reply });
+        profiles.await.unwrap_or_default()
+    }
+
     pub async fn recent(&self, limit: usize) -> Vec<PathBuf> {
         let (reply, roots) = oneshot::channel();
         self.send(Op::Recent { limit, reply });
@@ -157,6 +177,7 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
     let _ = connection.execute("ALTER TABLE projects ADD COLUMN opened_at INTEGER NOT NULL DEFAULT 0", []);
     let _ = connection.execute("ALTER TABLE agents ADD COLUMN model TEXT", []);
     let _ = connection.execute("ALTER TABLE agents ADD COLUMN color TEXT", []);
+    let _ = connection.execute("ALTER TABLE agents ADD COLUMN profile_id TEXT", []);
     Ok(())
 }
 
@@ -175,7 +196,10 @@ fn migrate_tables(connection: &Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS history (
              id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, tool TEXT NOT NULL,
              summary TEXT NOT NULL, decision TEXT NOT NULL, source TEXT NOT NULL, decided_at TEXT NOT NULL);
-         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+         CREATE TABLE IF NOT EXISTS profiles (
+             id TEXT PRIMARY KEY, name TEXT NOT NULL, persona TEXT NOT NULL, provider TEXT NOT NULL,
+             model TEXT, color TEXT, rules TEXT NOT NULL DEFAULT '[]');",
     )
 }
 
@@ -210,11 +234,13 @@ fn apply(db: &Connection, op: Op) -> rusqlite::Result<()> {
         }
         Op::SaveAgent(a) => {
             db.execute(
-                "INSERT INTO agents (id, group_id, name, task, provider, worktree, rules, persona, model, color, position)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, (SELECT COUNT(*) FROM agents))
+                "INSERT INTO agents (id, group_id, name, task, provider, worktree, rules, persona, model, color,
+                                     profile_id, position)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, (SELECT COUNT(*) FROM agents))
                  ON CONFLICT(id) DO UPDATE SET group_id = excluded.group_id, name = excluded.name,
                      task = excluded.task, provider = excluded.provider, rules = excluded.rules,
-                     persona = excluded.persona, model = excluded.model, color = excluded.color",
+                     persona = excluded.persona, model = excluded.model, color = excluded.color,
+                     profile_id = excluded.profile_id, worktree = excluded.worktree",
                 params![
                     a.id.to_string(),
                     a.group_id.to_string(),
@@ -225,7 +251,8 @@ fn apply(db: &Connection, op: Op) -> rusqlite::Result<()> {
                     json(&a.rules),
                     a.persona,
                     a.model,
-                    a.color
+                    a.color,
+                    a.profile_id.map(|id| id.to_string())
                 ],
             )?;
         }
@@ -259,6 +286,41 @@ fn apply(db: &Connection, op: Op) -> rusqlite::Result<()> {
         }
         Op::Opened(project) => {
             db.execute("UPDATE projects SET opened_at = unixepoch() WHERE id = ?1", params![project.to_string()])?;
+        }
+        Op::SaveProfile(p) => {
+            db.execute(
+                "INSERT INTO profiles (id, name, persona, provider, model, color, rules)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, persona = excluded.persona,
+                     provider = excluded.provider, model = excluded.model, color = excluded.color,
+                     rules = excluded.rules",
+                params![p.id.to_string(), p.name, p.persona, json(&p.provider), p.model, p.color, json(&p.rules)],
+            )?;
+        }
+        Op::DeleteProfile(id) => {
+            db.execute("DELETE FROM profiles WHERE id = ?1", params![id.to_string()])?;
+        }
+        Op::Profiles { reply } => {
+            let mut statement =
+                db.prepare("SELECT id, name, persona, provider, model, color, rules FROM profiles ORDER BY name")?;
+            let profiles = statement
+                .query_map([], |row| {
+                    let provider: String = row.get(3)?;
+                    let rules: String = row.get(6)?;
+                    Ok(Profile {
+                        id: uuid(&row.get::<_, String>(0)?),
+                        name: row.get(1)?,
+                        persona: row.get(2)?,
+                        provider: serde_json::from_str(&provider)
+                            .unwrap_or(Provider::CliAcp { command: "unknown".into() }),
+                        model: row.get(4)?,
+                        color: row.get(5)?,
+                        rules: serde_json::from_str(&rules).unwrap_or_default(),
+                    })
+                })?
+                .filter_map(Result::ok)
+                .collect();
+            let _ = reply.send(profiles);
         }
         Op::Recent { limit, reply } => {
             let mut statement = db.prepare("SELECT root FROM projects ORDER BY opened_at DESC, rowid DESC LIMIT ?1")?;
@@ -316,7 +378,7 @@ fn load(db: &Connection, root: &Path) -> rusqlite::Result<Option<LoadedProject>>
 
     let mut agents = Vec::new();
     let mut statement = db.prepare(
-        "SELECT id, group_id, name, task, provider, worktree, rules, persona, model, color FROM agents
+        "SELECT id, group_id, name, task, provider, worktree, rules, persona, model, color, profile_id FROM agents
          WHERE group_id = ?1 ORDER BY position, rowid",
     )?;
     for group in &groups {
@@ -341,6 +403,7 @@ fn load(db: &Connection, root: &Path) -> rusqlite::Result<Option<LoadedProject>>
                 color: row.get(9)?,
                 context: None,
                 cost_micros: 0,
+                profile_id: row.get::<_, Option<String>>(10)?.and_then(|id| Uuid::parse_str(&id).ok()),
             })
         })?;
         for agent in rows {
@@ -390,6 +453,7 @@ mod tests {
             color: None,
             context: None,
             cost_micros: 0,
+            profile_id: None,
         };
         {
             let store = Store::open(&path).unwrap();
@@ -410,5 +474,30 @@ mod tests {
         assert_eq!(loaded.agents[0].provider, agent.provider);
         assert_eq!(loaded.agents[0].model.as_deref(), Some("opus"));
         assert_eq!(loaded.layout.as_deref(), Some("{\"view\":\"log\"}"));
+    }
+
+    #[tokio::test]
+    async fn profiles_and_their_agents_survive_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("orch.db");
+        let profile = Profile {
+            id: Uuid::new_v4(),
+            name: "Mia".into(),
+            persona: "marketing specialist".into(),
+            provider: Provider::CliMcp { command: "claude".into() },
+            model: Some("opus".into()),
+            color: Some("pink".into()),
+            rules: vec![PermissionRule::parse("Bash(npm test:*)", Effect::Allow).unwrap()],
+        };
+        {
+            let store = Store::open(&path).unwrap();
+            store.save_profile(&profile);
+            assert_eq!(store.profiles().await, vec![profile.clone()]);
+            store.delete_profile(profile.id);
+            assert!(store.profiles().await.is_empty());
+            store.save_profile(&profile);
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.profiles().await, vec![profile]);
     }
 }

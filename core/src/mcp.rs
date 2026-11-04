@@ -322,6 +322,9 @@ mod tests {
                     crate::team::TeamRequest::Roster { reply, .. } => {
                         let _ = reply.send("- Front (group Web, Running): front end only".into());
                     }
+                    crate::team::TeamRequest::Remember { reply, .. } => {
+                        let _ = reply.send(Ok("noted".into()));
+                    }
                     crate::team::TeamRequest::Ask { to, message, reply, .. } => {
                         let _ = reply.send(Ok(format!("{to} got {message}")));
                     }
@@ -342,7 +345,7 @@ mod tests {
         let tools = call(&url, json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await;
         let names: Vec<&str> =
             tools["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
-        assert_eq!(names, [TOOL, crate::team::LIST, crate::team::ASK]);
+        assert_eq!(names, [TOOL, crate::team::REMEMBER, crate::team::LIST, crate::team::ASK]);
 
         let ask = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
             "name": crate::team::ASK, "arguments": { "agent": "Front", "message": "is the form wired?" }

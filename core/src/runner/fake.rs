@@ -60,6 +60,13 @@ impl AgentRunner for FakeRunner {
                     let decision =
                         ask_permission(&context, &info, "Bash", json!({ "command": command }), Vec::new()).await;
                     format!("{command}: {}\n", if decision.allows() { "allowed" } else { "denied" })
+                } else if let Some(note) = script.strip_prefix("note:") {
+                    let team = context.team.as_ref().expect("team tools");
+                    let input = serde_json::json!({ "note": note });
+                    match team.call(info.id, crate::team::REMEMBER, &input).await {
+                        Some(Ok(_)) => "noted\n".to_owned(),
+                        other => format!("remember failed: {other:?}\n"),
+                    }
                 } else if let Some((agent, message)) = script.strip_prefix("ask:").and_then(|r| r.split_once(':')) {
                     let team = context.team.as_ref().expect("team tools");
                     match team.ask(info.id, agent, message).await {

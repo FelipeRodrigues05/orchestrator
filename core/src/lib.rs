@@ -4,6 +4,7 @@ pub mod broker;
 pub mod discovery;
 pub mod host;
 pub mod mcp;
+pub mod memory;
 pub mod model;
 pub mod orchestrator;
 pub mod persistence;

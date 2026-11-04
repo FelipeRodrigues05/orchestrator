@@ -27,6 +27,11 @@ impl Orchestrator {
             "\nAnswer briefly: what you did, what is left, what you need. Do not restate the task or paste whole \
              files. @path/to/file names a file of the project.",
         );
+        prompt.push_str("\nWith the remember tool, note lasting lessons and the operator's preferences.");
+        let notes = self.memory_of(agent);
+        if !notes.is_empty() {
+            let _ = write!(prompt, "\nWhat you remember from earlier work:\n{notes}");
+        }
         let team = self.roster(agent.id, true);
         if !team.is_empty() {
             let _ = write!(prompt, "\nTeammates (ask_agent to ask one, list_agents for details):\n{team}");
@@ -65,6 +70,7 @@ impl Orchestrator {
                     roster
                 });
             }
+            TeamRequest::Remember { from, note, reply } => self.remember(from, &note, Some(reply)),
             TeamRequest::Ask { from, to, message, reply } => {
                 if let Err(error) = self.ask(from, &to, &message, reply) {
                     self.log(Some(from), LogLevel::Warn, &format!("ask {to}: {error}"));
