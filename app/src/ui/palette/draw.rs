@@ -42,6 +42,7 @@ impl Palette {
             Mode::Model(_) => vec![s("MODEL", TITLE)],
             Mode::Color(_) => vec![s("COLOR", TITLE)],
             Mode::DeleteKey => vec![s("DELETE API KEY", TITLE)],
+            Mode::Theme => vec![s("THEME", TITLE)],
             Mode::ApiKey => vec![s("API KEY", TITLE)],
             Mode::OpenIn => vec![s("OPEN IN EDITOR", TITLE)],
             Mode::SwitchProvider(_) => vec![s("SWITCH PROVIDER", TITLE)],
@@ -85,6 +86,7 @@ impl Palette {
                 "type its name, or a path · Browse… picks a folder",
             ),
             Mode::Mention(_) => ("file", "type part of its name or path · Esc keeps the @"),
+            Mode::Theme => ("theme", "the room's colours · red stays for what is urgent"),
             Mode::DeleteKey => (
                 "service",
                 "its key leaves the Secret Service; :key <service> stores a new one",

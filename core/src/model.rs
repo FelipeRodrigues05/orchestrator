@@ -453,6 +453,8 @@ pub struct AppState {
     pub recent_projects: Vec<PathBuf>,
     /// Git repositories found under the usual project folders.
     pub repositories: Vec<PathBuf>,
+    /// The room's colour theme by name (`mono`, `amber`…); the UI knows the palettes.
+    pub theme: String,
 }
 
 impl AppState {

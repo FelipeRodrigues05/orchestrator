@@ -86,6 +86,11 @@ impl Palette {
                 Outcome::Send(Command::ProbeModels(agent))
             }
             Pick::Waiting => Outcome::Keep,
+            Pick::ChooseTheme => {
+                self.to(Mode::Theme);
+                Outcome::Keep
+            }
+            Pick::Theme(name) => Outcome::Done(Command::SetTheme(name.to_owned())),
             Pick::DeleteKeys => {
                 self.to(Mode::DeleteKey);
                 Outcome::Keep

@@ -389,6 +389,14 @@ impl Room {
         }
     }
 
+    /// The colour theme the runtime has saved (the default until it says).
+    pub fn theme(&self) -> crate::ui::theme::Theme {
+        self.state
+            .as_ref()
+            .and_then(|s| crate::ui::theme::Theme::parse(&s.theme))
+            .unwrap_or_default()
+    }
+
     /// Whether the folder chooser should open (asked once).
     pub fn take_browse(&mut self) -> bool {
         std::mem::take(&mut self.browse)

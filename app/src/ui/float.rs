@@ -42,6 +42,7 @@ impl FloatingPet {
         area.set_draw_func({
             let room = room.clone();
             move |area, cr, width, height| {
+                painter.set_theme(room.borrow().theme());
                 let (cols, rows, view) = painter.fit(width, height);
                 let grid = room.borrow_mut().compose_pet(cols, rows);
                 painter.paint(area, cr, &grid, view, (width, height));

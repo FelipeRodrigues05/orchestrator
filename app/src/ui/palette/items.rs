@@ -26,6 +26,21 @@ impl Palette {
             Mode::SwitchProvider(_) => self.provider_items(state),
             Mode::Model(agent) => self.model_items(state, *agent),
             Mode::Color(agent) => color_items(state, *agent),
+            Mode::Theme => {
+                let current = crate::ui::theme::Theme::parse(&state.theme).unwrap_or_default();
+                crate::ui::theme::Theme::ALL
+                    .iter()
+                    .map(|theme| {
+                        let now = if *theme == current { " · in use" } else { "" };
+                        item(
+                            theme.name(),
+                            format!("{}{now}", theme.description()),
+                            "",
+                            Pick::Theme(theme.name()),
+                        )
+                    })
+                    .collect()
+            }
             Mode::DeleteKey => {
                 let stored: Vec<Item> = state
                     .providers
@@ -135,6 +150,12 @@ impl Palette {
             "",
             Pick::DeleteKeys,
         ));
+        let theme = if state.theme.is_empty() {
+            "mono"
+        } else {
+            state.theme.as_str()
+        };
+        items.push(item("Theme", format!("now {theme}"), "", Pick::ChooseTheme));
         items.push(item(
             "Update agent CLIs",
             "opencode, claude, codex, gemini…",

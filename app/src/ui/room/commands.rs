@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::format::{AGENT_COLORS, parse_color};
 use super::{DIM, Prompt, Room, View, WARN};
-use crate::ui::palette::Palette;
+use crate::ui::{palette::Palette, theme::Theme};
 
 impl Room {
     pub(super) fn run(&mut self, line: &str) {
@@ -46,6 +46,14 @@ impl Room {
             }
             "persona" => self.persona_command(rest),
             "color" | "colour" | "cor" => self.color_command(rest),
+            "theme" | "tema" => {
+                if let Some(theme) = Theme::parse(rest) {
+                    self.outbox.push(Command::SetTheme(theme.name().to_owned()));
+                } else {
+                    let names: Vec<&str> = Theme::ALL.iter().map(|t| t.name()).collect();
+                    self.say(&format!("themes: {}", names.join(", ")), WARN);
+                }
+            }
             "new" => self.new_command(rest),
             "start" | "stop" | "remove" | "merge" => self.agent_command(&word, rest),
             "edit" | "code" => {

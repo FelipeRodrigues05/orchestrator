@@ -8,6 +8,7 @@ mod pet;
 mod popup;
 mod render;
 mod room;
+mod theme;
 mod tray;
 
 use std::{
@@ -33,11 +34,11 @@ pub fn build_window(
     events: async_channel::Receiver<Event>,
 ) {
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
-    install_styles();
+    let styles = install_styles();
 
     let room = Rc::new(RefCell::new(Room::new()));
     let viewport = Rc::new(Cell::new(Viewport::default()));
-    let screen = new_screen(&room, &viewport);
+    let screen = new_screen(&room, &viewport, styles);
     // Unbounded channel: `try_send` never blocks GTK.
     let flush: Flush = Rc::new({
         let room = room.clone();
@@ -137,7 +138,11 @@ fn choose_project_folder(commands: async_channel::Sender<Command>) {
 }
 
 /// The drawing surface: the room composes a grid at every frame, `render` paints it.
-fn new_screen(room: &Shared<Room>, viewport: &Rc<Cell<Viewport>>) -> gtk::DrawingArea {
+fn new_screen(
+    room: &Shared<Room>,
+    viewport: &Rc<Cell<Viewport>>,
+    styles: Option<gtk::CssProvider>,
+) -> gtk::DrawingArea {
     let screen = gtk::DrawingArea::builder()
         .hexpand(true)
         .vexpand(true)
@@ -148,7 +153,16 @@ fn new_screen(room: &Shared<Room>, viewport: &Rc<Cell<Viewport>>) -> gtk::Drawin
     screen.set_draw_func({
         let room = room.clone();
         let viewport = viewport.clone();
+        let shown = Cell::new(None);
         move |area, cr, width, height| {
+            // The theme lives in the runtime's state; the window's CSS follows it.
+            let theme = room.borrow().theme();
+            if shown.replace(Some(theme)) != Some(theme)
+                && let Some(styles) = &styles
+            {
+                styles.load_from_string(&theme.palette().css());
+            }
+            painter.set_theme(theme);
             let (cols, rows, view) = painter.fit(width, height);
             viewport.set(view);
             let grid = room.borrow_mut().compose(cols, rows);
@@ -460,22 +474,17 @@ fn map_key(key: gdk::Key, modifiers: gdk::ModifierType, typing: bool) -> Option<
     Some(mapped)
 }
 
-fn install_styles() {
-    let Some(display) = gdk::Display::default() else {
-        return;
-    };
+/// The window's own CSS (around the grid); its colours follow the theme.
+fn install_styles() -> Option<gtk::CssProvider> {
+    let display = gdk::Display::default()?;
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(
-        "window, .control-room { background: #000000; }
-         window.pet-float { background: transparent; }
-         headerbar { background: #000000; color: #e6e6e6; font-family: monospace;
-                     font-weight: 700; box-shadow: none; border-bottom: 1px solid #444444; }",
-    );
+    provider.load_from_string(&theme::Theme::default().palette().css());
     gtk::style_context_add_provider_for_display(
         &display,
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+    Some(provider)
 }
 
 fn is_hyprland() -> bool {

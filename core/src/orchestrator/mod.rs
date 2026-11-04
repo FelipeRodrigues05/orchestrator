@@ -73,6 +73,8 @@ pub enum Command {
     SetFallback(String),
     /// Context fill (percent) at which agents go on with a summary; `None`: never.
     SetCompactAt(Option<u64>),
+    /// The room's colour theme, by name; saved for the next start.
+    SetTheme(String),
     /// Removes a service's API key from the Secret Service.
     DeleteApiKey(String),
     /// Asks the agent's provider which models it offers (the list then shows up in
@@ -443,6 +445,9 @@ impl Orchestrator {
         }
         if let (Some(id), Some(voice)) = (store.setting("voice").await, &self.voice) {
             voice.set_voice(Some(id));
+        }
+        if let Some(theme) = store.setting("theme").await {
+            self.state.theme = theme;
         }
         if let Some(compact) = store.setting("compact_at").await {
             self.compact_at = compact.parse().ok();

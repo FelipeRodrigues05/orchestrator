@@ -2,48 +2,22 @@
 
 use gtk::{cairo, pango, prelude::*};
 
-use super::grid::{self, Grid, Style, Tone, Weight};
+use std::cell::Cell;
+
+use super::{
+    grid::{self, Grid, Style, Weight},
+    theme::{Rgb, Theme},
+};
 
 const FONT: &str = "Monospace 10";
-const BACKGROUND: (f64, f64, f64) = rgb(0x00, 0x00, 0x00);
-
-const fn rgb(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
-    (r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0)
+/// A theme colour as Cairo wants it.
+fn rgb((r, g, b): Rgb) -> (f64, f64, f64) {
+    (
+        f64::from(r) / 255.0,
+        f64::from(g) / 255.0,
+        f64::from(b) / 255.0,
+    )
 }
-
-fn color(tone: Tone) -> (f64, f64, f64) {
-    match tone {
-        // Monochrome board; red is reserved for what needs the operator now.
-        Tone::Frame => rgb(0x44, 0x44, 0x44),
-        Tone::Title => rgb(0xe6, 0xe6, 0xe6),
-        Tone::Text => rgb(0xc8, 0xc8, 0xc8),
-        Tone::Dim => rgb(0x80, 0x80, 0x80),
-        Tone::Faint => rgb(0x2e, 0x2e, 0x2e),
-        Tone::Accent => rgb(0xff, 0xff, 0xff),
-        Tone::Ok => rgb(0xd8, 0xd8, 0xd8),
-        Tone::Warn | Tone::Error => rgb(0xff, 0x3b, 0x30),
-        Tone::Stopped => rgb(0x5a, 0x5a, 0x5a),
-        Tone::Agent(index) => {
-            let (r, g, b) = AGENT_RGB[usize::from(index) % AGENT_RGB.len()];
-            rgb(r, g, b)
-        }
-    }
-}
-
-/// Agents' colours, in the order of `room::format::AGENT_COLORS`: soft tones that
-/// read on black, and no red (red stays for what is urgent).
-const AGENT_RGB: [(u8, u8, u8); 10] = [
-    (0x5f, 0xd7, 0xff),
-    (0x7c, 0xd9, 0x92),
-    (0xf0, 0xd0, 0x6e),
-    (0xe0, 0x7b, 0xe0),
-    (0x7a, 0xa2, 0xf7),
-    (0xf5, 0xa9, 0x5b),
-    (0x4f, 0xd1, 0xc5),
-    (0xff, 0x9e, 0xc8),
-    (0xb3, 0x94, 0xf4),
-    (0xc3, 0xe8, 0x8d),
-];
 
 /// Where the grid sits inside the widget, to map clicks back to cells.
 #[derive(Debug, Clone, Copy, Default)]
@@ -73,6 +47,7 @@ pub struct Painter {
     cell_h: f64,
     /// Black background and scanlines; off for the floating pet.
     opaque: bool,
+    theme: Cell<Theme>,
 }
 
 impl Painter {
@@ -105,7 +80,22 @@ impl Painter {
             cell_w: f64::from(logical.width()) / scale / 100.0,
             cell_h: f64::from(logical.height()) / scale,
             opaque: true,
+            theme: Cell::new(Theme::default()),
         }
+    }
+
+    pub fn set_theme(&self, theme: Theme) {
+        self.theme.set(theme);
+    }
+
+    /// The colour of `style` in the current theme (the background for inverse text).
+    fn ink(&self, style: Style) -> (f64, f64, f64) {
+        let palette = self.theme.get().palette();
+        rgb(if style.inverse {
+            palette.background
+        } else {
+            palette.tone(style.tone)
+        })
     }
 
     /// Grid size that fits `width` × `height` pixels, and where it goes.
@@ -129,8 +119,9 @@ impl Painter {
         view: Viewport,
         size: (i32, i32),
     ) {
+        let palette = self.theme.get().palette();
         if self.opaque {
-            let (r, g, b) = BACKGROUND;
+            let (r, g, b) = rgb(palette.background);
             cr.set_source_rgb(r, g, b);
             let _ = cr.paint();
         } else {
@@ -162,7 +153,7 @@ impl Painter {
 
             for (x, cell) in row.iter().enumerate() {
                 if cell.style.inverse {
-                    let (r, g, b) = color(cell.style.tone);
+                    let (r, g, b) = rgb(palette.tone(cell.style.tone));
                     cr.set_source_rgb(r, g, b);
                     cr.rectangle(
                         view.x + x as f64 * view.cell_w,
@@ -208,7 +199,7 @@ impl Painter {
             }
         }
 
-        if !self.opaque {
+        if !self.opaque || !palette.scanlines {
             return;
         }
         // Faint CRT scanlines.
@@ -236,11 +227,7 @@ impl Painter {
             &self.regular
         }));
         layout.set_text(text);
-        let (r, g, b) = if style.inverse {
-            BACKGROUND
-        } else {
-            color(style.tone)
-        };
+        let (r, g, b) = self.ink(style);
         cr.set_source_rgb(r, g, b);
         // A fallback glyph wider than its cells is squeezed instead of overlapping.
         let wanted = text.chars().count() as f64 * self.cell_w;
@@ -270,11 +257,7 @@ impl Painter {
         y: f64,
     ) {
         let [north, south, west, east] = arms;
-        let (r, g, b) = if style.inverse {
-            BACKGROUND
-        } else {
-            color(style.tone)
-        };
+        let (r, g, b) = self.ink(style);
         cr.set_source_rgb(r, g, b);
         cr.set_line_width(1.0);
         let (right, bottom) = (x + self.cell_w, y + self.cell_h);

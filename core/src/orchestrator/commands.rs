@@ -63,6 +63,13 @@ impl Orchestrator {
             Command::OpenIn { agent, editor } => self.open_in(agent, editor).await,
             Command::SetApiKey { service, key } => self.set_api_key(service, key),
             Command::DeleteApiKey(service) => self.delete_api_key(service),
+            Command::SetTheme(theme) => {
+                if let Some(store) = &self.store {
+                    store.set_setting("theme", &theme);
+                }
+                self.state.theme = theme;
+                self.dirty = true;
+            }
             Command::SetProvider { agent, provider } => self.set_provider(agent, &provider),
             Command::SetGroupLimit { group, limit } => self.set_group_limit(&group, limit),
             Command::OpenEmail => self.open_email().await,

@@ -573,3 +573,19 @@ fn api_keys_can_be_deleted() {
         vec![Command::DeleteApiKey("anthropic".into())]
     );
 }
+
+#[test]
+fn themes_are_chosen_by_name_in_either_language() {
+    let mut room = room();
+    room.drain();
+    type_line(&mut room, ":theme âmbar");
+    assert_eq!(room.drain(), vec![Command::SetTheme("amber".into())]);
+    type_line(&mut room, ":tema claro");
+    assert_eq!(room.drain(), vec![Command::SetTheme("light".into())]);
+    type_line(&mut room, ":theme pink");
+    assert!(room.drain().is_empty());
+    let mut state = sample_state();
+    state.theme = "nord".into();
+    room.set_state(state);
+    assert_eq!(room.theme(), crate::ui::theme::Theme::Nord);
+}

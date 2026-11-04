@@ -64,6 +64,8 @@ enum Mode {
     Color(Uuid),
     /// Pick a service whose stored API key goes away.
     DeleteKey,
+    /// Pick the room's colour theme.
+    Theme,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -135,6 +137,8 @@ enum Pick {
     Waiting,
     ChooseColor(Uuid),
     DeleteKeys,
+    ChooseTheme,
+    Theme(&'static str),
     DeleteKey(String),
     /// `None`: picked from the agent's id; `Some("none")`: plain text.
     Color(Option<String>),
