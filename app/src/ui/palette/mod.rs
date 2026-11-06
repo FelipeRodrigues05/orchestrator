@@ -350,8 +350,8 @@ impl Palette {
     pub fn enter(&mut self, state: &AppState, selected: Option<Uuid>) -> Outcome {
         if self.free_text() {
             let text = self.query.trim().to_owned();
-            // A group's goal may be left empty.
-            let optional = matches!(&self.mode, Mode::NewAgent(w) if w.step == Step::GroupGoal)
+            // A group's goal and an agent's name (the app picks one) may be left empty.
+            let optional = matches!(&self.mode, Mode::NewAgent(w) if matches!(w.step, Step::GroupGoal | Step::Name))
                 || matches!(self.mode, Mode::NewGroup { name: Some(_) });
             if text.is_empty() && !optional {
                 return Outcome::Keep;

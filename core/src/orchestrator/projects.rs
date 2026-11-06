@@ -41,8 +41,16 @@ impl Orchestrator {
         for group in &groups {
             self.broker.set_rules(RuleScope::Group(group.id), group.rules.clone());
         }
-        for agent in &agents {
+        let mut agents = agents;
+        for agent in &mut agents {
             self.broker.set_rules(RuleScope::Agent(agent.id), agent.rules.clone());
+            // Codex agents made with the old ACP adapter run on the installed Codex (ADR 0025).
+            if let Some(provider) = crate::discovery::upgraded(&agent.provider, &self.state.providers) {
+                agent.provider = provider;
+                if let Some(store) = &self.store {
+                    store.save_agent(agent);
+                }
+            }
         }
         let (id, name) = (project.id, project.name.clone());
         if let Some(store) = &self.store {
@@ -218,11 +226,15 @@ impl Orchestrator {
             self.notice(LogLevel::Warn, format!("no group named {group}; create it with :group"));
             return None;
         };
-        let name = name.trim().to_owned();
-        if name.is_empty() || task.trim().is_empty() {
-            self.notice(LogLevel::Warn, "usage: :new <group> <name> [provider]: <task>");
+        if task.trim().is_empty() {
+            self.notice(LogLevel::Warn, "usage: :new <group> [name] [provider]: <task>");
             return None;
         }
+        // No name: the app picks a free one.
+        let name = match name.trim() {
+            "" => self.fresh_name(),
+            name => name.to_owned(),
+        };
         if self.state.agents.iter().any(|a| a.group_id == group.id && normalize(&a.name) == normalize(&name)) {
             self.notice(LogLevel::Warn, format!("{name} already exists in {}", group.name));
             return None;
@@ -335,4 +347,26 @@ impl Orchestrator {
         }
         self.notice(LogLevel::Info, format!("{} no longer spans {}", snapshot.name, root.display()));
     }
+
+    /// A short, speakable name no agent or library agent has yet.
+    pub(super) fn fresh_name(&self) -> String {
+        let taken = |name: &str| {
+            let name = normalize(name);
+            self.state.agents.iter().any(|a| normalize(&a.name) == name)
+                || self.state.profiles.iter().any(|p| normalize(&p.name) == name)
+        };
+        if let Some(name) = AGENT_NAMES.iter().find(|n| !taken(n)) {
+            return (*name).to_owned();
+        }
+        (2..).map(|n| format!("Agent {n}")).find(|n| !taken(n)).unwrap_or_default()
+    }
 }
+
+/// Names for agents created without one: short and easy to say, so the voice can
+/// call them.
+const AGENT_NAMES: [&str; 40] = [
+    "Atlas", "Iris", "Orion", "Nyx", "Echo", "Juno", "Vesta", "Castor", "Pollux", "Rhea", "Theia", "Selene", "Eos",
+    "Hestia", "Apollo", "Athena", "Ares", "Hera", "Gaia", "Kronos", "Hermes", "Helios", "Artemis", "Demeter", "Hades",
+    "Hyperion", "Phoebe", "Leto", "Nike", "Tyche", "Pan", "Eris", "Zephyr", "Boreas", "Thalia", "Clio", "Ceres",
+    "Luna", "Sol", "Vulcan",
+];

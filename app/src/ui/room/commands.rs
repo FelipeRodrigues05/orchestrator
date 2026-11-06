@@ -311,7 +311,7 @@ impl Room {
     /// `:new API Back opencode: the task | backend only` (the persona is optional).
     fn new_command(&mut self, rest: &str) {
         let Some((group, name, provider, task)) = parse_new(rest) else {
-            self.say("usage: :new <group> <name> [provider]: <task>", WARN);
+            self.say("usage: :new <group> [name] [provider]: <task>", WARN);
             return;
         };
         let (task, persona) = match task.split_once(" | ") {
@@ -453,7 +453,8 @@ pub(super) fn parse_new(rest: &str) -> Option<(String, String, Option<String>, S
     let (head, task) = rest.split_once(':')?;
     let mut words = head.split_whitespace();
     let group = words.next()?.to_owned();
-    let name = words.next()?.to_owned();
+    // The name is optional: without one the app picks it.
+    let name = words.next().unwrap_or_default().to_owned();
     let provider = words.next().map(str::to_owned);
     let task = task.trim();
     (!task.is_empty()).then(|| (group, name, provider, task.to_owned()))

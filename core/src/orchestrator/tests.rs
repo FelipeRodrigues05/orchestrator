@@ -500,3 +500,22 @@ async fn a_group_spans_other_projects_with_a_worktree_in_each() {
     room.send(Command::DetachProject { group: "api".into(), project: name }).await;
     room.until(|s| s.groups[0].attached.is_empty()).await;
 }
+
+#[tokio::test]
+async fn agents_without_a_name_get_a_free_one() {
+    let room = room();
+    room.staffed().await;
+    for _ in 0..2 {
+        room.send(Command::CreateAgent {
+            group: "api".into(),
+            name: String::new(),
+            provider: Some("fake".into()),
+            task: "review".into(),
+            persona: String::new(),
+        })
+        .await;
+    }
+    let state = room.until(|s| s.agents.len() == 4).await;
+    let names: Vec<&str> = state.agents.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(&names[2..], ["Atlas", "Iris"]);
+}

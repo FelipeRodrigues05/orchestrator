@@ -18,9 +18,9 @@ Linux and Wayland only. Built with Rust, GTK4 and libadwaita.
 
 ## What it does
 
-- **Agents from any provider.** CLIs that speak ACP (opencode, Gemini CLI, Codex
-  and Claude Code through adapters), Claude Code directly through an MCP permission
-  tool, API models (Anthropic, OpenAI, Gemini, OpenRouter) and local models
+- **Agents from any provider.** CLIs that speak ACP (opencode, Gemini CLI, Claude
+  Code through an adapter), Codex through its own app-server, Claude Code directly
+  through an MCP permission tool, API models (Anthropic, OpenAI, Gemini, OpenRouter) and local models
   (Ollama). Switch an agent's provider or model in the middle of a task; when a
   model hits its usage limit the agent goes on with the closest one available.
 - **One worktree per agent.** Agents never edit the same checkout; `:merge` brings
@@ -51,7 +51,7 @@ Linux and Wayland only. Built with Rust, GTK4 and libadwaita.
   - `bubblewrap` (`bwrap`) for the sandbox
   - `piper` (for example `piper-tts-bin` on the AUR) for spoken announcements
   - a microphone, and the whisper models (downloaded from inside the app)
-  - at least one agent: an ACP CLI on your `PATH`, `claude`, an API key, or Ollama
+  - at least one agent: an ACP CLI on your `PATH`, `codex`, `claude`, an API key, or Ollama
 
 On Arch Linux:
 
@@ -131,13 +131,15 @@ Press `n`. The wizard asks, one step at a time:
 
 1. **Group**: pick one, or type a new name (then an optional goal). With no project
    open, pick **Personal** for an agent of your own (marketing, writing, planning…).
-2. **Name**: short and speakable; the voice calls it by this name.
+2. **Name**: short and speakable; the voice calls it by this name. Leave it empty
+   and the app picks a free one (Atlas, Iris, Orion…).
 3. **Provider**: an ACP CLI, `claude`, an API, or a local model. `F5` lists them.
 4. **Task**: what it should do.
 5. **Persona** (optional): a ready-made one (Marketing specialist, Backend engineer,
    Code reviewer…) or your own description.
 
-One line does the same: `:new API Tests opencode: write the /pix tests | tests only`.
+One line does the same: `:new API Tests opencode: write the /pix tests | tests only`,
+or without a name: `:new API: write the /pix tests`.
 
 ### 3. Talk to agents
 
@@ -259,6 +261,7 @@ SPEC.md the architecture spec (Portuguese)
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test -p core acp_ -- --ignored        # against a real ACP CLI
+cargo test -p core codex_smoke -- --ignored # against the installed Codex
 ```
 
 Start with [docs/CODE_TOUR.md](docs/CODE_TOUR.md): how the app boots and what

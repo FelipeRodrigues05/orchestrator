@@ -186,6 +186,17 @@ impl Orchestrator {
                 let available = crate::runner::mcp_cli::CLAUDE_MODELS.map(str::to_owned).to_vec();
                 reply(AgentEvent::Models { current: None, available });
             }
+            Provider::CliCodex { command } => {
+                let cwd = agent.worktree.clone();
+                let cwd = if cwd.is_dir() { cwd } else { std::env::temp_dir() };
+                self.log(Some(id), LogLevel::Info, "asking its CLI which models it offers…");
+                tokio::spawn(async move {
+                    match crate::runner::codex::probe_models(&command, &cwd).await {
+                        Ok((_, available)) => reply(AgentEvent::Models { current: None, available }),
+                        Err(error) => reply(AgentEvent::Notice(format!("no model list: {error}"))),
+                    }
+                });
+            }
             Provider::CliAcp { command } => {
                 // Its worktree when it has one, else the project: a CLI may list models per folder.
                 let cwd = Some(agent.worktree.clone())
@@ -229,7 +240,7 @@ impl Orchestrator {
             (a, b) => a == b,
         })?;
         let model = match agent.provider {
-            Provider::CliAcp { .. } | Provider::CliMcp { .. } => agent.model.clone(),
+            Provider::CliAcp { .. } | Provider::CliMcp { .. } | Provider::CliCodex { .. } => agent.model.clone(),
             Provider::Api { .. } | Provider::Local { .. } => None,
         };
         Some(Candidate { label: option.label.clone(), provider: agent.provider.clone(), model })
@@ -371,7 +382,7 @@ impl Orchestrator {
                 self.switch_provider(id, Provider::Local { url, model: model.into() });
                 return;
             }
-            Provider::CliAcp { .. } | Provider::CliMcp { .. } => {}
+            Provider::CliAcp { .. } | Provider::CliMcp { .. } | Provider::CliCodex { .. } => {}
         }
         if !agent.models.is_empty() && !agent.models.iter().any(|m| m == model) {
             self.notice(

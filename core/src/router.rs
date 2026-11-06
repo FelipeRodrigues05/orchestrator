@@ -131,7 +131,7 @@ impl Router {
         for option in options.iter().filter(|o| o.ready) {
             let base = Candidate { label: option.label.clone(), provider: option.provider.clone(), model: None };
             let known: Vec<String> = match &option.provider {
-                Provider::CliAcp { .. } | Provider::CliMcp { .. } => {
+                Provider::CliAcp { .. } | Provider::CliMcp { .. } | Provider::CliCodex { .. } => {
                     self.models.get(&option.label).cloned().unwrap_or_else(|| {
                         if option.label.contains("claude") {
                             CLAUDE_MODELS.iter().map(|m| (*m).to_owned()).collect()

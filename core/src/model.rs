@@ -89,6 +89,10 @@ pub enum Provider {
     CliMcp {
         command: String,
     },
+    /// Codex through its own app-server protocol (ADR 0025).
+    CliCodex {
+        command: String,
+    },
     /// `key_ref` points into the Secret Service; the key itself never lives here.
     Api {
         service: String,
@@ -105,6 +109,7 @@ impl Provider {
     /// Short label for tight UI columns: `claude-code-acp` → `claude`.
     pub fn short_name(&self) -> &str {
         match self {
+            Provider::CliCodex { .. } => "codex",
             Provider::CliAcp { command } | Provider::CliMcp { command } => {
                 let program = command.split_whitespace().next().unwrap_or(command);
                 let program = program.rsplit('/').next().unwrap_or(program);

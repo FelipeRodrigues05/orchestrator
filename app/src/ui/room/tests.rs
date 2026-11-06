@@ -102,6 +102,10 @@ fn plain_text_talks_and_colon_runs_commands() {
         }]
     );
 
+    // Without a name the app picks one.
+    type_line(&mut room, ":new API: write the /pix tests");
+    assert!(matches!(&room.drain()[..], [Command::CreateAgent { name, .. }] if name.is_empty()));
+
     type_line(&mut room, ":group Front: checkout screen");
     assert_eq!(
         room.drain(),

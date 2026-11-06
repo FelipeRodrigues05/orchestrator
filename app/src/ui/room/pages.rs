@@ -54,7 +54,7 @@ const HELP: [(&str, &str); 52] = [
         "create a group (the goal is optional)",
     ),
     (
-        ":new <g> <n> [p]: <task>",
+        ":new <g> [n] [p]: <task>",
         "create an agent (p = provider label, F5) · \" | persona\"",
     ),
     (
@@ -282,7 +282,7 @@ fn setup_providers(page: &mut Page, grid: &mut Grid, state: &AppState) {
     page.section(
         grid,
         "AGENT PROVIDERS",
-        "use the label in :new <group> <name> <label>: <task>",
+        "use the label in :new <group> [name] <label>: <task>",
     );
     if state.providers.is_empty() {
         page.line(
@@ -305,6 +305,7 @@ fn setup_providers(page: &mut Page, grid: &mut Grid, state: &AppState) {
         let kind = match &option.provider {
             Provider::CliAcp { command } => format!("ACP  {command}"),
             Provider::CliMcp { command } => format!("MCP  {command}"),
+            Provider::CliCodex { command } => format!("CODEX {command} app-server"),
             Provider::Api { model, .. } => format!("API  {model} (label/<model> for another)"),
             Provider::Local { url, .. } => format!("LOCAL {url}"),
         };

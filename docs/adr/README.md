@@ -40,3 +40,4 @@ architecture looks the way it does.
 | [0022](0022-start-up-animation.md) | Start-up animation | Accepted |
 | [0023](0023-agent-library-and-memory.md) | Agent library (global agents) and memory | Accepted |
 | [0024](0024-groups-spanning-projects.md) | Groups that span several projects | Accepted |
+| [0025](0025-codex-app-server.md) | Codex through its own app-server protocol | Accepted |

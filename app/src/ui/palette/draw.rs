@@ -72,7 +72,7 @@ impl Palette {
                 ),
                 Step::Name => (
                     "name",
-                    "short and speakable: the voice calls it by this name",
+                    "short and speakable · Enter on empty: the app picks one",
                 ),
                 Step::Provider => ("provider", "who runs it · F5 lists them"),
                 Step::Task => ("task", "what this agent should do"),

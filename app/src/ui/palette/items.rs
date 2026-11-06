@@ -447,6 +447,7 @@ impl Palette {
                 let kind = match &p.provider {
                     Provider::CliAcp { .. } => "ACP cli",
                     Provider::CliMcp { .. } => "MCP cli",
+                    Provider::CliCodex { .. } => "Codex app-server",
                     Provider::Api { .. } => "API",
                     Provider::Local { .. } => "local model",
                 };

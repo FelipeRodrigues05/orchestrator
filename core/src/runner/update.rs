@@ -54,7 +54,8 @@ fn npm_global(package: &str) -> Option<Vec<String>> {
 }
 
 pub fn plan(provider: &Provider) -> Option<Plan> {
-    let (Provider::CliAcp { command } | Provider::CliMcp { command }) = provider else {
+    let (Provider::CliAcp { command } | Provider::CliMcp { command } | Provider::CliCodex { command }) = provider
+    else {
         return None;
     };
     let words = shell_words::split(command).ok()?;

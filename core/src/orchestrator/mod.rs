@@ -482,6 +482,12 @@ impl Orchestrator {
         }
         self.state.skip_intro = store.setting("intro").await.as_deref() == Some("off");
         self.state.profiles = store.profiles().await;
+        for profile in &mut self.state.profiles {
+            if let Some(provider) = discovery::upgraded(&profile.provider, &self.state.providers) {
+                profile.provider = provider;
+                store.save_profile(profile);
+            }
+        }
         if let Some(theme) = store.setting("theme").await {
             self.state.theme = theme;
         }

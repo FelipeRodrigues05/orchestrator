@@ -313,3 +313,14 @@ fn the_library_starts_the_wizard_with_its_agent() {
         })
     );
 }
+
+#[test]
+fn the_wizard_lets_the_app_name_the_agent() {
+    let state = sample_state();
+    let mut palette = Palette::new_agent();
+    typed(&mut palette, "fro");
+    palette.enter(&state, None);
+    // Enter on an empty name.
+    assert_eq!(palette.enter(&state, None), Outcome::Keep);
+    assert!(matches!(&palette.mode, Mode::NewAgent(w) if w.step == Step::Provider));
+}

@@ -33,7 +33,8 @@ fn is_executable(path: &Path) -> bool {
     path.metadata().is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
-/// CLIs that speak ACP, natively or through an adapter.
+/// CLIs that speak ACP, natively or through an adapter; Codex through its own
+/// app-server protocol (ADR 0025).
 pub fn acp_clis() -> Vec<ProviderOption> {
     let native: [(&str, &str, &str); 7] = [
         ("opencode", "opencode", "opencode acp"),
@@ -45,6 +46,15 @@ pub fn acp_clis() -> Vec<ProviderOption> {
         ("qwen", "qwen", "qwen --experimental-acp"),
     ];
     let mut options: Vec<ProviderOption> = Vec::new();
+    // The installed Codex itself: the ACP adapter bundles an older one that lags
+    // behind new models.
+    if which("codex").is_some() {
+        options.push(ProviderOption {
+            label: "codex".into(),
+            provider: Provider::CliCodex { command: "codex".into() },
+            ready: true,
+        });
+    }
     for (label, binary, command) in native {
         if which(binary).is_some() && !options.iter().any(|o| o.label == label) {
             options.push(acp(label, command));
@@ -254,6 +264,16 @@ pub fn project_files(root: &Path, limit: usize) -> Vec<String> {
         .output();
     let Some(output) = output.ok().filter(|o| o.status.success()) else { return Vec::new() };
     String::from_utf8_lossy(&output.stdout).lines().take(limit).map(str::to_owned).collect()
+}
+
+/// A provider saved before Codex ran natively (`codex-acp`, by npx or not) moves to
+/// the native one when it is available (ADR 0025); `None` when nothing changes.
+pub fn upgraded(provider: &Provider, options: &[ProviderOption]) -> Option<Provider> {
+    let Provider::CliAcp { command } = provider else { return None };
+    if !command.contains("codex-acp") {
+        return None;
+    }
+    options.iter().map(|o| &o.provider).find(|p| matches!(p, Provider::CliCodex { .. })).cloned()
 }
 
 #[cfg(test)]

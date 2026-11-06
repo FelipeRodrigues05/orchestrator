@@ -3,6 +3,7 @@
 
 pub mod acp;
 pub mod api;
+pub mod codex;
 #[cfg(test)]
 pub mod fake;
 pub mod llm;
@@ -101,6 +102,7 @@ pub fn for_provider(provider: &Provider, context: RunnerContext) -> RunnerResult
         Provider::CliAcp { .. } => Ok(Box::new(acp::AcpRunner::new(context))),
         Provider::Api { .. } | Provider::Local { .. } => Ok(Box::new(api::ApiRunner::new(context))),
         Provider::CliMcp { .. } => Ok(Box::new(mcp_cli::McpCliRunner::new(context))),
+        Provider::CliCodex { .. } => Ok(Box::new(codex::CodexRunner::new(context))),
     }
 }
 
